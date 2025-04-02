@@ -4,9 +4,6 @@
 This project demonstrates a complete end-to-end Change Data Capture (CDC) pipeline for a data lakehouse architecture deployed on Kubernetes. The architecture captures database changes in real-time and stores them in an Apache Iceberg data lakehouse.
 
 ## Architecture Overview
-
-![Architecture Diagram](docs/architecture.png)
-
 The setup consists of the following components:
 
 1. **Data Source**: FastAPI application with PostgreSQL database
