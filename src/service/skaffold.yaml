@@ -1,0 +1,23 @@
+apiVersion: skaffold/v2beta29
+kind: Config
+metadata:
+  name: fastapi-items-app
+build:
+  artifacts:
+    - image: '{{.IMAGE_NAME}}'
+      context: app
+      docker:
+        dockerfile: Dockerfile
+        buildArgs:
+          PLATFORM: "linux/amd64,linux/arm64"
+deploy:
+  kubectl:
+    manifests:
+      - k8s/postgres.yaml
+      - k8s/deployment.yaml
+      - k8s/service.yaml
+# portForward:
+#   - resourceType: deployment
+#     resourceName: fastapi-items-app
+#     port: 8000
+#     localPort: 8000

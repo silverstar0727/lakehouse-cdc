@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-items-app
+  labels:
+    app: fastapi-items-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fastapi-items-app
+  template:
+    metadata:
+      labels:
+        app: fastapi-items-app
+    spec:
+      containers:
+        - name: fastapi-items-app
+          image: ${IMAGE_NAME}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: POSTGRES_HOST
+              value: backend-postgres-headless
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              value: "12341234"
+            - name: POSTGRES_DB
+              value: postgres

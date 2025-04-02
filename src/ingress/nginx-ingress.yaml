@@ -1,0 +1,106 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: default-ingress
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: "app.${URL}.nip.io"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: fastapi-items-app
+            port:
+              number: 8000
+  - host: "locust.${URL}.nip.io"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: locust-master
+            port:
+              number: 8089
+---
+# Kafka namespace Ingress update
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kafka-ingress
+  namespace: strimzi-kafka
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: "kafdrop.${URL}.nip.io"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kafdrop
+            port:
+              number: 9000
+  - host: "kafka-connect.${URL}.nip.io"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kafka-connect
+            port:
+              number: 8083
+---
+# Update Ceph namespace Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ceph-ingress
+  namespace: rook-ceph
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: "ceph.${URL}.nip.io"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: rook-ceph-rgw-my-store-external
+            port:
+              number: 80
+---
+# Update Iceberg namespace Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: iceberg-ingress
+  namespace: iceberg
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: "iceberg-rest-catalog.${URL}.nip.io"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: iceberg-rest-catalog
+            port:
+              number: 8181

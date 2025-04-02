@@ -1,0 +1,38 @@
+---
+apiVersion: ceph.rook.io/v1
+kind: CephObjectStore
+metadata:
+  name: my-store
+  namespace: rook-ceph
+spec:
+  metadataPool:
+    failureDomain: host
+    replicated:
+      size: 1
+  dataPool:
+    failureDomain: host
+    replicated:
+      size: 1
+  preservePoolsOnDelete: true
+  gateway:
+    # Remove or disable SSL/TLS configuration
+    port: 80
+    # Remove securePort (disable TLS)
+    instances: 1
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+---
+# Create a user for S3 access
+apiVersion: ceph.rook.io/v1
+kind: CephObjectStoreUser
+metadata:
+  name: my-user
+  namespace: rook-ceph
+spec:
+  store: my-store
+  displayName: "My S3 User for boto3"

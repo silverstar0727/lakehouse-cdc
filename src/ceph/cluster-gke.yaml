@@ -1,0 +1,132 @@
+apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph
+  namespace: rook-ceph # namespace:cluster
+spec:
+  # GKE에서 사용할 데이터 경로
+  dataDirHostPath: /var/lib/rook
+  mon:
+    # 모니터 노드 수 설정
+    count: 1
+    # 프로덕션 환경에서는 노드당 하나의 모니터만 설정
+    allowMultiplePerNode: false
+    # GKE의 표준 StorageClass 사용
+    volumeClaimTemplate:
+      spec:
+        storageClassName: standard-rwo # GKE의 기본 SSD StorageClass
+        resources:
+          requests:
+            storage: 10Gi
+  cephVersion:
+    image: quay.io/ceph/ceph:v19.2.1
+    allowUnsupported: false
+  skipUpgradeChecks: false
+  continueUpgradeAfterChecksEvenIfNotHealthy: false
+  mgr:
+    count: 2
+    allowMultiplePerNode: false
+    modules:
+      - name: rook
+        enabled: true
+  # Ceph 대시보드 활성화 (외부 접근용)
+  dashboard:
+    enabled: true
+    ssl: true
+  crashCollector:
+    disable: false
+  logCollector:
+    enabled: true
+    periodicity: daily
+    maxLogSize: 500M
+  # 스토리지 구성 - GKE에 맞게 조정
+  storage:
+    allowDeviceClassUpdate: false
+    allowOsdCrushWeightUpdate: true
+    storageClassDeviceSets:
+      - name: set1
+        # 150GB를 저장하기 위해 충분한 OSD 설정
+        count: 3
+        # GKE에서는 PVC를 사용하므로 portable: true 설정
+        portable: true
+        # GKE의 SSD가 일반적으로 성능이 좋으므로 조정
+        tuneDeviceClass: false
+        tuneFastDeviceClass: true
+        encrypted: false
+        # 노드 간 OSD 분산을 위한 설정
+        placement:
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - rook-ceph-osd
+        preparePlacement:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchExpressions:
+                      - key: app
+                        operator: In
+                        values:
+                          - rook-ceph-osd
+                      - key: app
+                        operator: In
+                        values:
+                          - rook-ceph-osd-prepare
+                  topologyKey: kubernetes.io/hostname
+          topologySpreadConstraints:
+            - maxSkew: 1
+              # GKE에서는 zone 레이블이 있으므로 그대로 사용
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: DoNotSchedule
+              labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - rook-ceph-osd-prepare
+        # GKE 리소스 설정
+        resources:
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+        volumeClaimTemplates:
+          - metadata:
+              name: data
+            spec:
+              resources:
+                requests:
+                  # 150GB를 3개 OSD로 나누어 저장, 여유 공간 고려
+                  storage: 20Gi
+              # GKE의 표준 SSD StorageClass 사용
+              storageClassName: standard-rwo
+              volumeMode: Block
+              accessModes:
+                - ReadWriteOnce
+  # OSD 준비 리소스 설정
+  resources:
+    prepareosd:
+      requests:
+        cpu: "200m"
+        memory: "500Mi"
+      limits:
+        cpu: "1"
+        memory: "2Gi"
+  # priorityClassNames: 
+  #   mon: system-node-critical
+  #   osd: system-node-critical
+  #   mgr: system-cluster-critical
+  disruptionManagement:
+    managePodBudgets: true
+    osdMaintenanceTimeout: 30
+    pgHealthCheckTimeout: 0

@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: iceberg
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-postgres-headless
+  namespace: iceberg
+spec:
+  clusterIP: None
+  selector:
+    app: iceberg-postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-postgres
+  namespace: iceberg
+spec:
+  selector:
+    app: iceberg-postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: iceberg-postgres
+  namespace: iceberg
+spec:
+  serviceName: "iceberg-postgres-headless"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iceberg-postgres
+  template:
+    metadata:
+      labels:
+        app: iceberg-postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14
+        env:
+        - name: POSTGRES_DB
+          value: iceberg
+        - name: POSTGRES_USER
+          value: iceberg
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - iceberg
+          initialDelaySeconds: 5
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard-rwo
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secrets
+  namespace: iceberg
+type: Opaque
+data:
+  password: MTIzNDEyMzQ=  # base64 encoded '12341234'

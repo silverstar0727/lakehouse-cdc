@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafdrop
+  namespace: strimzi-kafka
+  labels:
+    app: kafdrop
+    mlops.component: message-broker-ui
+    mlops.vendor: open-source
+    mlops.stage: data-ingestion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafdrop
+  template:
+    metadata:
+      labels:
+        app: kafdrop
+    spec:
+      containers:
+      - name: kafdrop
+        image: obsidiandynamics/kafdrop:latest
+        ports:
+        - containerPort: 9000
+        env:
+        - name: KAFKA_BROKERCONNECT
+          # Bootstrap service of the Strimzi KRaft cluster
+          value: "kraft-cluster-kafka-bootstrap:9092"
+        - name: JVM_OPTS
+          value: "-Xms128M -Xmx256M"
+        - name: SERVER_SERVLET_CONTEXTPATH
+          value: "/"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+      # Place on the same node pool as the KRaft cluster
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: cloud.google.com/gke-nodepool
+                operator: Exists
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafdrop
+  namespace: strimzi-kafka
+  labels:
+    app: kafdrop
+spec:
+  selector:
+    app: kafdrop
+  ports:
+  - port: 9000
+    targetPort: 9000
+  type: NodePort

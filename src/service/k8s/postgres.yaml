@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-postgres-headless
+spec:
+  clusterIP: None
+  selector:
+    app: backend-postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-postgres
+spec:
+  selector:
+    app: backend-postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: backend-postgres
+spec:
+  serviceName: "backend-postgres-headless"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-postgres
+  template:
+    metadata:
+      labels:
+        app: backend-postgres
+    spec:
+      securityContext:
+        fsGroup: 999  # postgres group id
+      initContainers:
+      - name: init-postgres-data-dir
+        image: busybox
+        command: ['sh', '-c', 'mkdir -p /var/lib/postgresql/data/pgdata && chmod 700 /var/lib/postgresql/data/pgdata && chown -R 999:999 /var/lib/postgresql/data/pgdata']
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      containers:
+      - name: postgres
+        image: postgres:14
+        securityContext:
+          runAsUser: 999  # postgres user id
+          runAsGroup: 999 # postgres group id
+          allowPrivilegeEscalation: false
+        env:
+        - name: POSTGRES_DB
+          value: postgres
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-config-volume
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        command:
+        - "postgres"
+        - "-c"
+        - "config_file=/etc/postgresql/postgresql.conf"
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: postgres-config-volume
+        configMap:
+          name: postgres-config
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard-rwo
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secrets
+type: Opaque
+data:
+  password: MTIzNDEyMzQ=  # base64 encoded '12341234'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+data:
+  postgresql.conf: |
+    # Replication settings
+    wal_level = logical
+    max_wal_senders = 10
+    max_replication_slots = 10
+    max_connections = 100
+    shared_buffers = 256MB
+    
+    # Network settings
+    listen_addresses = '*'
+    
+    # Performance settings
+    effective_cache_size = 1GB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
