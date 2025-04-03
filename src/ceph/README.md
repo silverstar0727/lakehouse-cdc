@@ -62,21 +62,7 @@ Monitor the object store creation:
 kubectl -n rook-ceph get cephobjectstore -w
 ```
 
-### 4. Create Load Balancer Service
-
-Expose the object storage service:
-
-```bash
-kubectl apply -f lb-gke.yaml
-```
-
-Check the service:
-
-```bash
-kubectl -n rook-ceph get svc -w
-```
-
-### 5. Get S3 Access Keys
+### 4. Get S3 Access Keys
 
 Retrieve the S3 access credentials:
 

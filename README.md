@@ -45,7 +45,6 @@ kubectl create clusterrolebinding rook-endpointslice-binding --clusterrole=rook-
 kubectl apply -f crds.yaml -f common.yaml -f operator.yaml
 kubectl apply -f cluster-gke.yaml
 kubectl apply -f object-gke.yaml
-kubectl apply -f lb-gke.yaml
 
 # Wait for deployment to complete
 kubectl -n rook-ceph get cephclusters -w
