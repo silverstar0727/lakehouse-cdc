@@ -104,12 +104,7 @@ export S3_SECRET_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-
 export S3_ACCESS_KEY_B64=$(echo -n "$S3_ACCESS_KEY" | base64)
 export S3_SECRET_KEY_B64=$(echo -n "$S3_SECRET_KEY" | base64)
 
-# Update the rest-catalog.yaml file with sed
-sed -i '' "s/s3AccessKey:.*$/s3AccessKey: $S3_ACCESS_KEY_B64  # Updated from Ceph/" rest-catalog.yaml
-sed -i '' "s/s3SecretKey:.*$/s3SecretKey: $S3_SECRET_KEY_B64  # Updated from Ceph/" rest-catalog.yaml
-
-# Apply the updated configuration
-kubectl apply -f rest-catalog.yaml
+kubectl apply -f <(sed -e 's|s3AccessKey:.*|s3AccessKey: '"$S3_ACCESS_KEY_B64"'|' -e 's|s3SecretKey:.*|s3SecretKey: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
 
 # Restart the Iceberg REST Catalog pod for changes to take effect
 kubectl -n iceberg rollout restart statefulset iceberg-rest-catalog

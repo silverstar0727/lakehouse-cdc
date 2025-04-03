@@ -30,8 +30,8 @@ metadata:
 type: Opaque
 data:
   catalogPassword: MTIzNDEyMzQ=  # base64 encoded '12341234'
-  s3AccessKey: OEUzR0wwVlFaTFFXWVYxOFUyU08=  # Updated from Ceph
-  s3SecretKey: b0JFOEZCUHdHbFFsSVRiT0k0TFVMY2c0dldmaWZCaUNBZDc3TnV0YQ==  # Updated from Ceph
+  s3AccessKey: ""  # Updated from Ceph
+  s3SecretKey: ""  # Updated from Ceph
 ---
 apiVersion: v1
 kind: Service
