@@ -16,8 +16,7 @@ spec:
    spec:
      containers:
        - name: locust-worker
-         # Image will be replaced by Skaffold with the appropriate tag
-         image: {{.DOCKER_REGISTRY}}{{if .DOCKER_REGISTRY}}/{{end}}{{.DOCKER_USERNAME}}/{{.DOCKER_IMAGE}}
+         image: lakehouse-cdc-locust
          imagePullPolicy: IfNotPresent
          resources:
             limits:

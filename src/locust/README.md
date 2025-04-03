@@ -45,19 +45,12 @@ The test simulates realistic user behavior with varied wait times between action
 Run the following commands directly in your terminal:
 
 ```bash
-# Set your Docker image configuration (customize as needed)
-export DOCKER_REGISTRY=""
-export DOCKER_USERNAME="your-username"  # Change this to your Docker Hub username
-export DOCKER_IMAGE="locust-test"
+# Set your custom image
+export IMAGE_REGISTRY=<yourusername>
 
-# Display the image that will be used
-echo "Using Docker image: ${DOCKER_REGISTRY}${DOCKER_REGISTRY:+/}${DOCKER_USERNAME}/${DOCKER_IMAGE}"
-
-# Run skaffold
-skaffold run
+# Deploy with Skaffold
+skaffold run --default-repo $IMAGE_REGISTRY
 ```
-
-Then, access the Locust web interface at [http://localhost:8089](http://localhost:8089)
 
 ### Configuring the Load Test
 
@@ -79,20 +72,6 @@ The Locust web interface provides:
 - Response time graphs
 - Error rates
 - Download options for test results
-
-## Customizing Tests
-
-To modify the test behavior, edit the `locustfile.py` file and rebuild the Docker image by running skaffold again:
-
-```bash
-# Make sure your environment variables are set (if running in a new terminal)
-export DOCKER_REGISTRY=""
-export DOCKER_USERNAME="your-username"  # Change this to your Docker Hub username
-export DOCKER_IMAGE="locust-test"
-
-# Run skaffold to rebuild and redeploy
-skaffold run
-```
 
 ## Stopping the Load Test
 

@@ -4,7 +4,7 @@ metadata:
   name: loadtest
 build:
   artifacts:
-  - image: {{.DOCKER_REGISTRY}}{{if .DOCKER_REGISTRY}}/{{end}}{{.DOCKER_USERNAME}}/{{.DOCKER_IMAGE}}
+  - image: lakehouse-cdc-locust
     context: .
     docker:
       dockerfile: Dockerfile

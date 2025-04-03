@@ -27,35 +27,23 @@ The setup consists of the following components:
    kubectl apply -f postgres.yaml
    ```
 
-2. **Update S3 Credentials from Ceph**
-
-   Before deploying the Iceberg REST Catalog, update the S3 credentials from Ceph:
-
-   ```bash
-   # Get S3 credentials from Ceph
-   export S3_ACCESS_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-store-my-user -o jsonpath='{.data.AccessKey}' | base64 --decode)
-   export S3_SECRET_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-store-my-user -o jsonpath='{.data.SecretKey}' | base64 --decode)
-   
-   # Create base64 encoded versions for the secret
-   export S3_ACCESS_KEY_B64=$(echo -n "$S3_ACCESS_KEY" | base64)
-   export S3_SECRET_KEY_B64=$(echo -n "$S3_SECRET_KEY" | base64)
-   
-   # Update the rest-catalog.yaml file with sed
-   sed -i '' "s/s3AccessKey:.*$/s3AccessKey: $S3_ACCESS_KEY_B64  # Updated from Ceph/" rest-catalog.yaml
-   sed -i '' "s/s3SecretKey:.*$/s3SecretKey: $S3_SECRET_KEY_B64  # Updated from Ceph/" rest-catalog.yaml
-   
-   echo "Updated S3 credentials in rest-catalog.yaml"
-   ```
-
-3. **Deploy the Iceberg REST Catalog service**
+2. **Deploy the Iceberg REST Catalog service**
 
    This will set up the REST API endpoint for Iceberg operations:
 
    ```bash
-   kubectl apply -f rest-catalog.yaml
+   # Get current S3 credentials from Ceph
+   export S3_ACCESS_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-store-my-user -o jsonpath='{.data.AccessKey}' | base64 --decode)
+   export S3_SECRET_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-store-my-user -o jsonpath='{.data.SecretKey}' | base64 --decode)
+
+   # Create base64 encoded versions for the secret
+   export S3_ACCESS_KEY_B64=$(echo -n "$S3_ACCESS_KEY" | base64)
+   export S3_SECRET_KEY_B64=$(echo -n "$S3_SECRET_KEY" | base64)
+
+   kubectl apply -f <(sed -e 's|s3AccessKey:.*|s3AccessKey: '"$S3_ACCESS_KEY_B64"'|' -e 's|s3SecretKey:.*|s3SecretKey: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
    ```
 
-4. **Verify the deployment**
+3. **Verify the deployment**
 
    ```bash
    kubectl -n iceberg get all

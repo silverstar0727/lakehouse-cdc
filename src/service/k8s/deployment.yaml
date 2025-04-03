@@ -22,7 +22,7 @@ spec:
             - containerPort: 8000
           env:
             - name: POSTGRES_HOST
-              value: backend-postgres-headless
+              value: backend-postgres
             - name: POSTGRES_USER
               value: postgres
             - name: POSTGRES_PASSWORD

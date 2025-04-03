@@ -58,19 +58,28 @@ This processor can be containerized using Docker for easier deployment.
 1. **Build the Docker image:**
 
 ```bash
+cd ../service
 docker build -t lakehouse-cdc-processor:latest .
 ```
 
 2. **Run the container:**
 
 ```bash
+export EXTERNAL_IP=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+export OBC_ACCESS_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 --decode)
+export OBC_SECRET_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 --decode)
+
+export BOOTSTRAP_SERVER_URL=$(kubectl get service -n strimzi-kafka kraft-cluster-kafka-external-bootstrap -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
 docker run -d \
-  --name cdc-processor \
-  -e EXTERNAL_IP=<your-external-ip> \
-  -e S3_ACCESS_KEY=<your-s3-access-key> \
-  -e S3_SECRET_KEY=<your-s3-secret-key> \
-  -e BOOTSTRAP_SERVER_URL=<your-bootstrap-lb-ip> \
-  lakehouse-cdc-processor:latest
+   --name cdc-processor \
+   -e EXTERNAL_IP=$EXTERNAL_IP \
+   -e S3_ACCESS_KEY=$OBC_ACCESS_KEY \
+   -e S3_SECRET_KEY=$OBC_SECRET_KEY \
+   -e BOOTSTRAP_SERVER_URL=$BOOTSTRAP_SERVER_URL \
+   -e ICEBERG_WAREHOUSE_PATH=s3a://iceberg-warehouse \
+   lakehouse-cdc-processor:latest
 ```
 
 ## Table Structure
