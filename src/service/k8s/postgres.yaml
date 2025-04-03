@@ -104,11 +104,12 @@ spec:
           timeoutSeconds: 5
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "256Mi"
+            cpu: "250m"
           limits:
-            memory: "2Gi"
-            cpu: "1000m"
+            memory: "1Gi"
+            cpu: "500m"
+        args: ["-c", "config_file=/etc/postgresql/postgresql.conf"]
       volumes:
       - name: postgres-config-volume
         configMap:
