@@ -26,7 +26,7 @@ The setup consists of the following components:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/lakehouse-cdc-demo.git
+git clone https://github.com/silverstar0727/lakehouse-cdc.git
 cd lakehouse-cdc-demo
 ```
 
