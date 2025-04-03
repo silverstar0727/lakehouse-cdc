@@ -38,23 +38,23 @@ export EXTERNAL_IP=$(kubectl get svc nginx-ingress-ingress-nginx-controller -n i
 
 5. Apply the Ingress configuration with the correct URL:
 ```bash
-sed "s/\${URL}/$EXTERNAL_IP/g" nginx-ingress.yaml | kubectl apply -f -
+sed "s/\${EXTERNAL_IP}/$EXTERNAL_IP/g" nginx-ingress.yaml | kubectl apply -f -
 ```
 
 ## Available Services
 
 After installation, the following services will be accessible:
 
-| Service | URL | Description |
+| Service | EXTERNAL_IP | Description |
 |---------|-----|-------------|
-| FastAPI Application | http://app.${URL}.nip.io | Main application API |
-| Locust | http://locust.${URL}.nip.io | Load testing web interface |
-| Kafdrop | http://kafdrop.${URL}.nip.io | Kafka cluster management UI |
-| Kafka Connect | http://kafka-connect.${URL}.nip.io | Kafka Connect REST API |
-| Ceph Object Storage | http://ceph.${URL}.nip.io | S3-compatible storage interface |
-| Iceberg REST Catalog | http://iceberg-rest-catalog.${URL}.nip.io | Iceberg catalog REST interface |
+| FastAPI Application | http://app.${EXTERNAL_IP}.nip.io | Main application API |
+| Locust | http://locust.${EXTERNAL_IP}.nip.io | Load testing web interface |
+| Kafdrop | http://kafdrop.${EXTERNAL_IP}.nip.io | Kafka cluster management UI |
+| Kafka Connect | http://kafka-connect.${EXTERNAL_IP}.nip.io | Kafka Connect REST API |
+| Ceph Object Storage | http://ceph.${EXTERNAL_IP}.nip.io | S3-compatible storage interface |
+| Iceberg REST Catalog | http://iceberg-rest-catalog.${EXTERNAL_IP}.nip.io | Iceberg catalog REST interface |
 
-Replace `${URL}` with the actual IP address assigned to your Ingress Controller.
+Replace `${EXTERNAL_IP}` with the actual IP address assigned to your Ingress Controller.
 
 ## Configuration
 

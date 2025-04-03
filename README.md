@@ -64,7 +64,7 @@ helm install nginx-ingress ingress-nginx/ingress-nginx --namespace ingress-nginx
 export EXTERNAL_IP=$(kubectl get svc nginx-ingress-ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 # Apply Ingress configuration
-sed "s/\${URL}/$EXTERNAL_IP/g" nginx-ingress.yaml | kubectl apply -f -
+sed "s/\${EXTERNAL_IP}/$EXTERNAL_IP/g" nginx-ingress.yaml | kubectl apply -f -
 ```
 
 ### 4. Deploy Kafka and Kafka Connect with Debezium
@@ -122,7 +122,7 @@ skaffold run
 
 ```bash
 # Create PostgreSQL CDC Connector
-export URL=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 curl -X POST -H "Content-Type: application/json" -d '{
   "name": "postgres-connector",
   "config": {
@@ -144,7 +144,7 @@ curl -X POST -H "Content-Type: application/json" -d '{
     "transforms.unwrap.drop.tombstones": "false",
     "transforms.unwrap.delete.handling.mode": "rewrite"
   }
-}' http://kafka-connect.${URL}.nip.io/connectors
+}' http://kafka-connect.${EXTERNAL_IP}.nip.io/connectors
 ```
 
 ### 8. Deploy Load Testing Framework (Optional)
@@ -165,16 +165,16 @@ skaffold run
 
 After deployment, the following services will be accessible:
 
-| Service | URL | Description |
+| Service | EXTERNAL_IP | Description |
 |---------|-----|-------------|
-| FastAPI Application | http://app.${URL}.nip.io | Main application API |
-| Locust | http://locust.${URL}.nip.io | Load testing web interface |
-| Kafdrop | http://kafdrop.${URL}.nip.io | Kafka cluster management UI |
-| Kafka Connect | http://kafka-connect.${URL}.nip.io | Kafka Connect REST API |
-| Ceph Object Storage | http://ceph.${URL}.nip.io | S3-compatible storage interface |
-| Iceberg REST Catalog | http://iceberg-rest-catalog.${URL}.nip.io | Iceberg catalog REST interface |
+| FastAPI Application | http://app.${EXTERNAL_IP}.nip.io | Main application API |
+| Locust | http://locust.${EXTERNAL_IP}.nip.io | Load testing web interface |
+| Kafdrop | http://kafdrop.${EXTERNAL_IP}.nip.io | Kafka cluster management UI |
+| Kafka Connect | http://kafka-connect.${UEXTERNAL_IPRL}.nip.io | Kafka Connect REST API |
+| Ceph Object Storage | http://ceph.${EXTERNAL_IP}.nip.io | S3-compatible storage interface |
+| Iceberg REST Catalog | http://iceberg-rest-catalog.${EXTERNAL_IP}.nip.io | Iceberg catalog REST interface |
 
-Replace `${URL}` with the actual IP address assigned to your Ingress Controller.
+Replace `${EXTERNAL_IP}` with the actual IP address assigned to your Ingress Controller.
 
 ## Using the Demo
 
@@ -186,7 +186,7 @@ Replace `${URL}` with the actual IP address assigned to your Ingress Controller.
 
 ```bash
 # Set the API URL
-export API_URL=http://app.${URL}.nip.io
+export API_URL=http://app.${EXTERNAL_IP}.nip.io
 
 # Create an item
 curl -X POST $API_URL/items -H "Content-Type: application/json" -d '{"name":"Test Item","description":"This is a test item","price":29.99}'
