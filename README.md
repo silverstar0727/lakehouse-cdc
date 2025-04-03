@@ -148,8 +148,8 @@ curl -X POST -H "Content-Type: application/json" -d '{
 ```bash
 cd ../locust
 
-# Deploy Locust
-skaffold run
+# Deploy with Skaffold
+skaffold run --default-repo $IMAGE_REGISTRY
 ```
 
 ## Accessing the Services
