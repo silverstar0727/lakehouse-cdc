@@ -17,7 +17,7 @@ from spark_session import create_iceberg_spark_session
 EXTERNAL_IP = os.getenv("EXTERNAL_IP")
 S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY")
 S3_SECRET_KEY = os.getenv("S3_SECRET_KEY")
-ICEBERG_WAREHOUSE_PATH = f"s3://warehouse/"
+ICEBERG_WAREHOUSE_PATH = f"s3://iceberg-warehouse/"
 
 BOOTSTRAP_SERVER_URL = os.getenv("BOOTSTRAP_SERVER_URL")
 

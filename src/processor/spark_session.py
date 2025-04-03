@@ -10,7 +10,7 @@ def create_iceberg_spark_session(external_ip: str, s3_access_key: str, s3_secret
 
         # Set the correct path to use in S3
         # Remove redundant local path parts
-        actual_warehouse_path = "s3a://warehouse"  # Use only base warehouse path
+        actual_warehouse_path = "s3a://iceberg-warehouse"  # Use only base warehouse path
         
         # Set up packages
         conf.set("spark.jars.packages", 
