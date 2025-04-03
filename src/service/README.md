@@ -34,14 +34,14 @@ You must set your own Docker image using the `IMAGE_NAME` environment variable:
 
 ```bash
 # Set your custom image
-export IMAGE_NAME=yourusername/yourimage
+export IMAGE_REGISTRY=<yourusername>
 ```
 
 ### 2. Deploy with Skaffold
 
 ```bash
-# Run skaffold with your image
-skaffold run
+# Deploy with Skaffold
+skaffold run --default-repo $IMAGE_REGISTRY
 ```
 
 ## Accessing the API
@@ -63,25 +63,6 @@ The PostgreSQL database is configured with:
 - Logical replication enabled (wal_level = logical)
 - Credentials stored in Kubernetes secrets
 - Data persisted using PersistentVolumeClaims
-
-## Development
-
-### Building the Docker image
-
-```bash
-cd app
-docker build -t yourusername/cdc-app .
-docker push yourusername/cdc-app
-```
-
-### Custom Configuration
-
-You can modify database connection parameters in the deployment manifest:
-
-- `POSTGRES_HOST`: PostgreSQL service hostname
-- `POSTGRES_USER`: Database username
-- `POSTGRES_PASSWORD`: Database password
-- `POSTGRES_DB`: Database name
 
 ## Troubleshooting
 

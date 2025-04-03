@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: fastapi-items-app
-          image: ${IMAGE_NAME}
+          image: lakehouse-cdc-app
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000

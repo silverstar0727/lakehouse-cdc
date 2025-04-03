@@ -112,7 +112,7 @@ kubectl apply -f rest-catalog.yaml
 cd ../service
 
 # Set your Docker image
-export IMAGE_NAME=yourusername/lakehouse-cdc-app
+export IMAGE_REGISTRY=<yourusername>
 
 # Deploy with Skaffold
 skaffold run
@@ -151,11 +151,6 @@ curl -X POST -H "Content-Type: application/json" -d '{
 
 ```bash
 cd ../locust
-
-# Set your Docker image configuration
-export DOCKER_REGISTRY=""
-export DOCKER_USERNAME="your-username"
-export DOCKER_IMAGE="locust-test"
 
 # Deploy Locust
 skaffold run
