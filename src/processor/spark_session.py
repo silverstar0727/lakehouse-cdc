@@ -7,10 +7,6 @@ def create_iceberg_spark_session(external_ip: str, s3_access_key: str, s3_secret
     try:
         # Spark configuration
         conf = SparkConf()
-
-        # Set the correct path to use in S3
-        # Remove redundant local path parts
-        actual_warehouse_path = "s3a://iceberg-warehouse"  # Use only base warehouse path
         
         # Set up packages
         conf.set("spark.jars.packages", 
@@ -24,8 +20,8 @@ def create_iceberg_spark_session(external_ip: str, s3_access_key: str, s3_secret
         conf.set("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog")
         conf.set("spark.sql.catalog.iceberg.catalog-impl", "org.apache.iceberg.rest.RESTCatalog")
         conf.set("spark.sql.catalog.iceberg.uri", f"http://iceberg-rest-catalog.{external_ip}.nip.io")
-        conf.set("spark.sql.catalog.iceberg.warehouse", actual_warehouse_path)
-        conf.set("spark.sql.warehouse.dir", actual_warehouse_path)
+        conf.set("spark.sql.catalog.iceberg.warehouse", iceberg_warehouse_path)
+        conf.set("spark.sql.warehouse.dir", iceberg_warehouse_path)
 
         # S3/Ceph configuration
         conf.set("spark.hadoop.fs.s3a.endpoint", f"http://ceph.{external_ip}.nip.io")
@@ -35,7 +31,7 @@ def create_iceberg_spark_session(external_ip: str, s3_access_key: str, s3_secret
         conf.set("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         
         # Add: Set default file system explicitly
-        conf.set("spark.hadoop.fs.defaultFS", actual_warehouse_path)
+        conf.set("spark.hadoop.fs.defaultFS", iceberg_warehouse_path)
         
         # # S3A performance settings
         # conf.set("spark.hadoop.fs.s3a.connection.establish.timeout", "10000")

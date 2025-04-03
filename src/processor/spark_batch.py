@@ -17,13 +17,13 @@ from spark_session import create_iceberg_spark_session
 EXTERNAL_IP = os.getenv("EXTERNAL_IP")
 S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY")
 S3_SECRET_KEY = os.getenv("S3_SECRET_KEY")
-ICEBERG_WAREHOUSE_PATH = f"s3://iceberg-warehouse/"
+ICEBERG_WAREHOUSE_PATH = os.getenv("ICEBERG_WAREHOUSE_PATH")
 
 BOOTSTRAP_SERVER_URL = os.getenv("BOOTSTRAP_SERVER_URL")
 
 # Kafka configuration
 kafka_config = {
-    'bootstrap.servers': BOOTSTRAP_SERVER_URL,
+    'bootstrap.servers': f"{BOOTSTRAP_SERVER_URL}:9094",
     'group.id': 'spark-iceberg-consumer',
     'auto.offset.reset': 'latest'
 }

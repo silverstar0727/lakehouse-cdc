@@ -198,6 +198,45 @@ curl -X DELETE $API_URL/item/1
 - REST interface for table operations
 - Configuration details in [src/iceberg/README.md](src/iceberg/README.md)
 
+### CDC Processor
+
+- PySpark-based processor to handle CDC events
+- Consumes from Kafka and writes to Iceberg tables
+- Components:
+  - **Spark Session Manager** (`spark_session.py`): Configures and creates a Spark session with Iceberg and S3/Ceph support
+  - **CDC Batch Processor** (`spark_batch.py`): Consumes CDC events from Kafka and writes them to Iceberg tables
+- Processing logic:
+  - Consumes messages in batches
+  - Determines operation type (create, update, delete)
+  - Handles deduplication using window functions
+  - Uses Iceberg MERGE INTO for upserts and deletes
+  - Partitions data by year and month
+- Optimization features:
+  - Periodically compacts small files
+  - Expires old snapshots
+  - Removes orphaned files
+- Running with Docker:
+  ```bash
+   cd ../processor
+   docker build -t lakehouse-cdc-processor:latest .
+   export EXTERNAL_IP=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+   export OBC_ACCESS_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 --decode)
+   export OBC_SECRET_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 --decode)
+
+   export BOOTSTRAP_SERVER_URL=$(kubectl get service -n strimzi-kafka kraft-cluster-kafka-external-bootstrap -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+   
+   docker run -d \
+      --name cdc-processor \
+      -e EXTERNAL_IP=$EXTERNAL_IP \
+      -e S3_ACCESS_KEY=$OBC_ACCESS_KEY \
+      -e S3_SECRET_KEY=$OBC_SECRET_KEY \
+      -e BOOTSTRAP_SERVER_URL=$BOOTSTRAP_SERVER_URL \
+      -e ICEBERG_WAREHOUSE_PATH=s3a://iceberg-warehouse \
+      lakehouse-cdc-processor:latest
+  ```
+- Configuration details in [src/processor/README.md](src/processor/README.md)
+
 ### FastAPI Service
 
 - Sample application with PostgreSQL database
