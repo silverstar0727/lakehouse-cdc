@@ -147,6 +147,6 @@ metadata:
   name: iceberg-warehouse-bucket
   namespace: iceberg
 spec:
-  generateBucketName: iceberg-warehouse
+  bucketName: iceberg-warehouse
   storageClassName: rook-ceph-delete-bucket
 ---
