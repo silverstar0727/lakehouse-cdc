@@ -71,12 +71,7 @@ spec:
         - name: postgres-data
           mountPath: /var/lib/postgresql/data
         - name: postgres-config-volume
-          mountPath: /etc/postgresql/postgresql.conf
-          subPath: postgresql.conf
-        command:
-        - "postgres"
-        - "-c"
-        - "config_file=/etc/postgresql/postgresql.conf"
+          mountPath: /etc/postgresql
         readinessProbe:
           exec:
             command:
@@ -85,6 +80,15 @@ spec:
             - postgres
           initialDelaySeconds: 5
           periodSeconds: 10
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - "bash"
+              - "-c"
+              - |
+                sleep 5
+                pg_ctl reload -D $PGDATA
       volumes:
       - name: postgres-config-volume
         configMap:
