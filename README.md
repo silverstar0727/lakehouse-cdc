@@ -118,29 +118,11 @@ skaffold run --default-repo $IMAGE_REGISTRY
 
 ```bash
 # Create PostgreSQL CDC Connector
-export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-curl -X POST -H "Content-Type: application/json" -d '{
-  "name": "postgres-connector",
-  "config": {
-    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-    "database.hostname": "backend-postgres.default.svc.cluster.local",
-    "database.port": "5432",
-    "database.user": "postgres",
-    "database.password": "12341234",
-    "database.dbname": "postgres",
-    "database.server.name": "backend-postgres-server",
-    "topic.prefix": "postgres-connector",
-    "plugin.name": "pgoutput",
-    "publication.autocreate.mode": "filtered",
-    "slot.name": "debezium_slot",
-    "table.include.list": "public.items",
-    "snapshot.mode": "initial",
-    "transforms": "unwrap",
-    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
-    "transforms.unwrap.drop.tombstones": "false",
-    "transforms.unwrap.delete.handling.mode": "rewrite"
-  }
-}' http://kafka-connect.${EXTERNAL_IP}.nip.io/connectors
+export EXTERNAL_IP=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+cd ../kafka
+pip install requests
+python create_connector.py
 ```
 
 ### 8. Deploy Load Testing Framework (Optional)
