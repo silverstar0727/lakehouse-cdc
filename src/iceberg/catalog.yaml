@@ -1,0 +1,109 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: iceberg-warehouse-bucket
+  namespace: iceberg
+spec:
+  bucketName: iceberg-warehouse
+  storageClassName: rook-ceph-delete-bucket
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: iceberg
+  name: rest-catalog-config
+data:
+  catalog-config.properties: |
+    catalog-impl=org.apache.iceberg.jdbc.JdbcCatalog
+    warehouse=s3a://iceberg-warehouse/
+    uri=jdbc:postgresql://postgres:5432/iceberg
+    jdbc.user=iceberg
+    jdbc.password=icebergpassword
+    jdbc.driver=org.postgresql.Driver
+    s3.endpoint=http://rook-ceph-rgw-my-store.rook-ceph.svc.cluster.local
+    s3.path-style-access=true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iceberg-s3-credentials
+  namespace: iceberg
+type: Opaque
+data:
+  AWS_ACCESS_KEY_ID: ""
+  AWS_SECRET_ACCESS_KEY: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: iceberg
+  name: rest-catalog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rest-catalog
+  template:
+    metadata:
+      labels:
+        app: rest-catalog
+    spec:
+      containers:
+      - name: rest-catalog
+        image: tabulario/iceberg-rest:0.6.0
+        ports:
+        - containerPort: 8181
+        env:
+        - name: CATALOG_WAREHOUSE
+          value: "s3a://iceberg-warehouse/"
+        - name: CATALOG_IMPL
+          value: "org.apache.iceberg.jdbc.JdbcCatalog"
+        - name: CATALOG_URI
+          value: "jdbc:postgresql://postgres:5432/iceberg"
+        - name: CATALOG_JDBC_USER
+          value: "iceberg"
+        - name: CATALOG_JDBC_PASSWORD
+          value: "icebergpassword"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: iceberg-s3-credentials
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: iceberg-s3-credentials
+              key: AWS_SECRET_ACCESS_KEY
+        - name: AWS_REGION
+          value: "us-east-1"  # 기본값 설정
+        - name: AWS_S3_ENDPOINT
+          value: "http://rook-ceph-rgw-my-store.rook-ceph.svc.cluster.local"
+        - name: S3_PATH_STYLE_ACCESS
+          value: "true"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/catalog
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+      volumes:
+      - name: config-volume
+        configMap:
+          name: rest-catalog-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-rest-catalog
+  namespace: iceberg
+spec:
+  selector:
+    app: rest-catalog
+  ports:
+  - port: 8181
+    targetPort: 8181
+  type: ClusterIP

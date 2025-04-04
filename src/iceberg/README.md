@@ -40,7 +40,7 @@ The setup consists of the following components:
    export S3_ACCESS_KEY_B64=$(echo -n "$S3_ACCESS_KEY" | base64)
    export S3_SECRET_KEY_B64=$(echo -n "$S3_SECRET_KEY" | base64)
 
-   kubectl apply -f <(sed -e 's|s3AccessKey:.*|s3AccessKey: '"$S3_ACCESS_KEY_B64"'|' -e 's|s3SecretKey:.*|s3SecretKey: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
+   kubectl apply -f <(sed -e 's|AWS_ACCESS_KEY_ID:.*|AWS_ACCESS_KEY_ID: '"$S3_ACCESS_KEY_B64"'|' -e 's|AWS_SECRET_ACCESS_KEY:.*|AWS_SECRET_ACCESS_KEY: '"$S3_SECRET_KEY_B64"'|' catalog.yaml)
    ```
 
 3. **Verify the deployment**
@@ -59,25 +59,26 @@ The setup consists of the following components:
 
 ### PostgreSQL Database
 
-- **Service**: Available at `iceberg-postgres.iceberg.svc.cluster.local:5432`
+- **Service**: Available at `postgres.iceberg.svc.cluster.local:5432`
 - **Database name**: `iceberg`
 - **User**: `iceberg`
-- **Password**: `12341234` (stored as a Kubernetes secret)
+- **Password**: `icebergpassword`
 - **Persistence**: 10Gi volume claim for database storage
 
 ### Iceberg REST Catalog
 
-- **Image**: `tabulario/iceberg-rest:0.5.0`
+- **Image**: `tabulario/iceberg-rest:0.6.0`
 - **Service**: Available at `iceberg-rest-catalog.iceberg.svc.cluster.local:8181`
 - **Resources**: Requests 500m CPU and 512Mi memory, with limits of 2 CPU and 2Gi memory
-- **JVM settings**: -Xmx1024m -Xms512m
-- **Persistence**: 5Gi volume claim for cache storage
+- **Environment variables**: Configured for JDBC PostgreSQL connection and S3 settings
+- **Configuration**: Uses ConfigMap for catalog properties
 
 ### S3 Storage with Rook-Ceph
 
-- **Bucket name**: Automatically generated with prefix `iceberg-warehouse`
+- **Bucket name**: `iceberg-warehouse` using ObjectBucketClaim
 - **Access method**: Uses S3 endpoint, access key, and secret key from Rook-Ceph
 - **Configuration**: Path style access with region `us-east-1`
+- **Endpoint**: `http://rook-ceph-rgw-my-store.rook-ceph.svc.cluster.local`
 
 ## Managing S3 Credentials
 
@@ -92,10 +93,11 @@ export S3_SECRET_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-
 export S3_ACCESS_KEY_B64=$(echo -n "$S3_ACCESS_KEY" | base64)
 export S3_SECRET_KEY_B64=$(echo -n "$S3_SECRET_KEY" | base64)
 
-kubectl apply -f <(sed -e 's|s3AccessKey:.*|s3AccessKey: '"$S3_ACCESS_KEY_B64"'|' -e 's|s3SecretKey:.*|s3SecretKey: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
+# Update the secret in the catalog.yaml file
+kubectl apply -f <(sed -e 's|AWS_ACCESS_KEY_ID:.*|AWS_ACCESS_KEY_ID: '"$S3_ACCESS_KEY_B64"'|' -e 's|AWS_SECRET_ACCESS_KEY:.*|AWS_SECRET_ACCESS_KEY: '"$S3_SECRET_KEY_B64"'|' catalog.yaml)
 
 # Restart the Iceberg REST Catalog pod for changes to take effect
-kubectl -n iceberg rollout restart statefulset iceberg-rest-catalog
+kubectl -n iceberg rollout restart deployment rest-catalog
 ```
 
 ## Usage
@@ -109,7 +111,7 @@ To connect to the Iceberg REST Catalog from external applications, configure you
 
 - Default credentials are used in this demo setup and should be changed in production
 - The S3 access keys are stored as Kubernetes secrets
-- The PostgreSQL password is stored as a Kubernetes secret
+- The PostgreSQL password is stored as a Kubernetes ConfigMap (should be moved to Secret in production)
 
 ## Troubleshooting
 
