@@ -62,8 +62,8 @@ To access Kafdrop UI, use the configured ingress:
 
 ```bash
 # Get your external IP or domain
-export URL=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-echo "Access Kafdrop at http://kafdrop.${URL}.nip.io"
+export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "Access Kafdrop at http://kafdrop.${EXTERNAL_IP}.nip.io"
 ```
 
 #### Kafka Connect REST API
@@ -72,8 +72,8 @@ Access Kafka Connect using the configured ingress:
 
 ```bash
 # Get your external IP or domain
-export URL=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-echo "Access Kafka Connect at http://kafka-connect.${URL}.nip.io"
+export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "Access Kafka Connect at http://kafka-connect.${EXTERNAL_IP}.nip.io"
 ```
 
 ## Setting Up Connectors
@@ -81,14 +81,14 @@ echo "Access Kafka Connect at http://kafka-connect.${URL}.nip.io"
 ### List installed connectors
 
 ```bash
-export EXTERNAL_IP=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 curl -X GET http://kafka-connect.${EXTERNAL_IP}.nip.io/connector-plugins | jq
 ```
 
 ### Create PostgreSQL CDC Connector
 
 ```bash
-export EXTERNAL_IP=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 pip install requests
 python create_connector.py

@@ -118,7 +118,7 @@ skaffold run --default-repo $IMAGE_REGISTRY
 
 ```bash
 # Create PostgreSQL CDC Connector
-export EXTERNAL_IP=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 cd ../kafka
 pip install requests
@@ -219,12 +219,13 @@ curl -X DELETE $API_URL/item/1
   ```bash
    cd ../processor
    docker build -t lakehouse-cdc-processor:latest .
-   export EXTERNAL_IP=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+   export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
    export OBC_ACCESS_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 --decode)
    export OBC_SECRET_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 --decode)
 
    export BOOTSTRAP_SERVER_URL=$(kubectl get service -n strimzi-kafka kraft-cluster-kafka-external-bootstrap -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+   export ICEBERG_WAREHOUSE_PATH="s3a://iceberg-warehouse"
    
    docker run -d \
       --name cdc-processor \
@@ -232,7 +233,7 @@ curl -X DELETE $API_URL/item/1
       -e S3_ACCESS_KEY=$OBC_ACCESS_KEY \
       -e S3_SECRET_KEY=$OBC_SECRET_KEY \
       -e BOOTSTRAP_SERVER_URL=$BOOTSTRAP_SERVER_URL \
-      -e ICEBERG_WAREHOUSE_PATH=s3a://iceberg-warehouse \
+      -e ICEBERG_WAREHOUSE_PATH=$ICEBERG_WAREHOUSE_PATH \
       lakehouse-cdc-processor:latest
   ```
 - Configuration details in [src/processor/README.md](src/processor/README.md)

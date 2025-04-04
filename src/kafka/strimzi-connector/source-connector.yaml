@@ -1,0 +1,33 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  name: postgres-source-connector
+  namespace: strimzi-kafka
+  labels:
+    strimzi.io/cluster: kafka-connect
+spec:
+  class: io.debezium.connector.postgresql.PostgresConnector
+  tasksMax: 1
+  config:
+    tasks.max: 1
+    topic.prefix: backend
+    database.hostname: backend-postgres
+    database.port: 5432
+    database.user: postgres
+    database.password: postgres
+    database.dbname: postgres
+    database.server.name: backend
+    table.include.list: public.items
+    plugin.name: pgoutput
+    publication.name: dbz_publication
+    slot.name: debezium
+    schema.history.internal.kafka.bootstrap.servers: kraft-cluster-kafka-bootstrap.strimzi-kafka.svc.cluster.local:9092
+    schema.history.internal.kafka.topic: schema-changes.backend
+    transforms: unwrap
+    transforms.unwrap.type: io.debezium.transforms.ExtractNewRecordState
+    transforms.unwrap.drop.tombstones: false
+    transforms.unwrap.delete.handling.mode: rewrite
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: true
+    value.converter.schemas.enable: true

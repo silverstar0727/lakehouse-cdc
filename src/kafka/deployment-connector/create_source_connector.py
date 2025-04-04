@@ -40,6 +40,8 @@ CONNECTOR_CONFIG = {
 def create_connector():
     headers = {"Content-Type": "application/json"}
     
+    print(f"PostgreSQL 소스 커넥터를 생성합니다. URL: {CONNECT_URL}")
+    
     try:
         # Check existing connectors (to prevent name conflicts)
         try:
@@ -60,16 +62,16 @@ def create_connector():
         
         # Check response
         if response.status_code == 201 or response.status_code == 200:
-            print(f"Connector '{CONNECTOR_CONFIG['name']}' successfully created.")
+            print(f"PostgreSQL 소스 커넥터 생성 성공!")
             print(json.dumps(response.json(), indent=2))
             return 0
         else:
-            print(f"Connector creation failed: HTTP {response.status_code}")
+            print(f"PostgreSQL 소스 커넥터 생성 실패: HTTP {response.status_code}")
             print(response.text)
             return 1
     
     except requests.exceptions.RequestException as e:
-        print(f"API request error: {e}")
+        print(f"API 요청 중 오류 발생: {e}")
         return 1
 
 if __name__ == "__main__":
