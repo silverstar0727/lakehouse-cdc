@@ -1,0 +1,95 @@
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iceberg-s3-credentials
+  namespace: iceberg
+type: Opaque
+data:
+  AWS_ACCESS_KEY_ID: ""
+  AWS_SECRET_ACCESS_KEY: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iceberg-rest-catalog
+  namespace: iceberg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iceberg-rest-catalog
+  template:
+    metadata:
+      labels:
+        app: iceberg-rest-catalog
+    spec:
+      containers:
+      - name: iceberg-rest
+        image: tabulario/iceberg-rest:1.6.0
+        ports:
+        - containerPort: 8181
+        env:
+        
+          # S3 기본 자격 증명
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: iceberg-s3-credentials
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: iceberg-s3-credentials
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_REGION
+            value: "us-east-1"
+          - name: AWS_S3_ENDPOINT_URL
+            value: "http://rook-ceph-rgw-my-store.rook-ceph.svc:80"
+
+          # Iceberg REST 서버 설정
+          - name: REST_PORT
+            value: "8181"
+
+          # 카탈로그 설정
+          - name: CATALOG_IMPL
+            value: "org.apache.iceberg.jdbc.JdbcCatalog"
+          - name: CATALOG_URI
+            value: "jdbc:postgresql://postgres.iceberg.svc:5432/iceberg"
+          - name: CATALOG_JDBC_USER
+            value: "iceberg"
+          - name: CATALOG_JDBC_PASSWORD
+            value: "icebergpassword"
+          - name: CATALOG_WAREHOUSE
+            value: "s3a://iceberg-warehouse/"
+
+          # S3 설정 - 참고 설정과 일치시킴
+          - name: CATALOG_IO__IMPL
+            value: "org.apache.iceberg.aws.s3.S3FileIO"
+          - name: CATALOG_S3_ENDPOINT
+            value: "http://rook-ceph-rgw-my-store.rook-ceph.svc:80"
+          - name: CATALOG_S3_PATH__STYLE__ACCESS
+            value: "true"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+      # 추가 볼륨이 필요할 경우 여기에 설정
+      
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-rest-catalog
+  namespace: iceberg
+spec:
+  selector:
+    app: iceberg-rest-catalog
+  ports:
+  - port: 8181
+    targetPort: 8181
+
