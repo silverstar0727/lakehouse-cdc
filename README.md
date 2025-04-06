@@ -20,6 +20,7 @@ The setup consists of the following components:
 - Helm v3
 - Docker
 - Skaffold (for development workflow)
+- Python 3.x with `requests` library installed
 
 ## Deployment Instructions
 
@@ -27,7 +28,7 @@ The setup consists of the following components:
 
 ```bash
 git clone https://github.com/silverstar0727/lakehouse-cdc.git
-cd lakehouse-cdc-demo
+cd lakehouse-cdc
 ```
 
 ### 2. Deploy Rook-Ceph Object Storage
@@ -69,8 +70,10 @@ sed "s/\${EXTERNAL_IP}/$EXTERNAL_IP/g" nginx-ingress.yaml | kubectl apply -f -
 
 ### 4. Deploy Kafka and Kafka Connect with Debezium
 
+Updated to include sink connector setup:
+
 ```bash
-cd ../kafka
+cd src/kafka
 
 # Add and install Strimzi Kafka Operator
 helm repo add strimzi https://strimzi.io/charts
@@ -80,11 +83,19 @@ helm install strimzi-kafka-operator strimzi/strimzi-kafka-operator --version 0.4
 
 # Deploy Kafka cluster, Kafka Connect, and Kafdrop
 kubectl apply -f strimzi.yaml
-kubectl apply -f kafka-deployment.yaml
+kubectl apply -f deployment-connector/kafka-deployment.yaml
 kubectl apply -f kafdrop.yaml
+
+# Create PostgreSQL source connector
+python deployment-connector/create_source_connector.py
+
+# Create Iceberg sink connector
+python deployment-connector/create_sink_connector.py
 ```
 
 ### 5. Deploy Iceberg Data Lakehouse
+
+Updated to include namespace creation and table creation:
 
 ```bash
 cd ../iceberg
@@ -99,7 +110,29 @@ export S3_SECRET_KEY_B64=$(echo -n "$S3_SECRET_KEY" | base64)
 
 # Deploy PostgreSQL and Iceberg REST catalog
 kubectl apply -f postgres.yaml
-kubectl apply -f <(sed -e 's|s3AccessKey:.*|s3AccessKey: '"$S3_ACCESS_KEY_B64"'|' -e 's|s3SecretKey:.*|s3SecretKey: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
+kubectl apply -f <(sed -e 's|AWS_ACCESS_KEY_ID:.*|AWS_ACCESS_KEY_ID: '"$S3_ACCESS_KEY_B64"'|' -e 's|AWS_SECRET_ACCESS_KEY:.*|AWS_SECRET_ACCESS_KEY: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
+
+# Create namespace and table
+export EXTERNAL_IP=$(kubectl get svc nginx-ingress-ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+curl -X POST -H "Content-Type: application/json" \
+  http://$EXTERNAL_IP/v1/namespaces \
+  -d '{"namespace": ["example_namespace"]}'
+
+curl -X POST -H "Content-Type: application/json" \
+  http://$EXTERNAL_IP/v1/namespaces/example_namespace/tables \
+  -d '{
+    "name": "example_table",
+    "schema": {
+      "type": "struct",
+      "fields": [
+        {"id": 1, "name": "id", "type": "int", "required": true},
+        {"id": 2, "name": "name", "type": "string", "required": false}
+      ]
+    },
+    "properties": {
+      "write.format.default": "parquet"
+    }
+  }'
 ```
 
 ### 6. Deploy FastAPI Service and PostgreSQL Database
@@ -136,14 +169,14 @@ skaffold run --default-repo $IMAGE_REGISTRY
 
 ## Accessing the Services
 
-After deployment, the following services will be accessible:
+Updated to include Kafka Connect and Iceberg REST catalog:
 
 | Service | EXTERNAL_IP | Description |
-|---------|-----|-------------|
+|---------|-------------|-------------|
 | FastAPI Application | http://app.${EXTERNAL_IP}.nip.io | Main application API |
 | Locust | http://locust.${EXTERNAL_IP}.nip.io | Load testing web interface |
 | Kafdrop | http://kafdrop.${EXTERNAL_IP}.nip.io | Kafka cluster management UI |
-| Kafka Connect | http://kafka-connect.${UEXTERNAL_IPRL}.nip.io | Kafka Connect REST API |
+| Kafka Connect | http://kafka-connect.${EXTERNAL_IP}.nip.io | Kafka Connect REST API |
 | Ceph Object Storage | http://ceph.${EXTERNAL_IP}.nip.io | S3-compatible storage interface |
 | Iceberg REST Catalog | http://iceberg-rest-catalog.${EXTERNAL_IP}.nip.io | Iceberg catalog REST interface |
 
@@ -230,8 +263,8 @@ curl -X DELETE $API_URL/item/1
    docker run -d \
       --name cdc-processor \
       -e EXTERNAL_IP=$EXTERNAL_IP \
-      -e S3_ACCESS_KEY=$OBC_ACCESS_KEY \
-      -e S3_SECRET_KEY=$OBC_SECRET_KEY \
+      -e OBC_ACCESS_KEY=$OBC_ACCESS_KEY \
+      -e OBC_SECRET_KEY=$OBC_SECRET_KEY \
       -e BOOTSTRAP_SERVER_URL=$BOOTSTRAP_SERVER_URL \
       -e ICEBERG_WAREHOUSE_PATH=$ICEBERG_WAREHOUSE_PATH \
       lakehouse-cdc-processor:latest

@@ -32,7 +32,7 @@ spec:
         - containerPort: 8181
         env:
         
-          # S3 기본 자격 증명
+          # S3 credentials
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
@@ -48,11 +48,11 @@ spec:
           - name: AWS_S3_ENDPOINT_URL
             value: "http://rook-ceph-rgw-my-store.rook-ceph.svc:80"
 
-          # Iceberg REST 서버 설정
+          # Iceberg REST server settings
           - name: REST_PORT
             value: "8181"
 
-          # 카탈로그 설정
+          # catalog settings
           - name: CATALOG_IMPL
             value: "org.apache.iceberg.jdbc.JdbcCatalog"
           - name: CATALOG_URI
@@ -64,7 +64,7 @@ spec:
           - name: CATALOG_WAREHOUSE
             value: "s3a://iceberg-warehouse/"
 
-          # S3 설정 - 참고 설정과 일치시킴
+          # S3 settings
           - name: CATALOG_IO__IMPL
             value: "org.apache.iceberg.aws.s3.S3FileIO"
           - name: CATALOG_S3_ENDPOINT
@@ -78,7 +78,6 @@ spec:
           limits:
             cpu: "2"
             memory: "2Gi"
-      # 추가 볼륨이 필요할 경우 여기에 설정
       
 ---
 apiVersion: v1

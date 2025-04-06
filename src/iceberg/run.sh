@@ -19,7 +19,7 @@ curl -X POST -H "Content-Type: application/json" \
 curl -X POST -H "Content-Type: application/json" \
   http://iceberg-rest-catalog.34.173.195.18.nip.io/v1/namespaces/example_namespace/tables \
   -d '{
-    "name": "simple_table2",
+    "name": "simple_table3",
     "schema": {
       "type": "struct",
       "fields": [

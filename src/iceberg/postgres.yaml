@@ -21,7 +21,7 @@ metadata:
   name: postgres-pvc
   namespace: iceberg
 spec:
-  storageClassName: standard-rwo  # 스토리지 클래스 지정
+  storageClassName: standard-rwo # Change this to your storage class
   accessModes:
     - ReadWriteOnce
   resources:

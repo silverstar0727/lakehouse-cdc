@@ -5,10 +5,8 @@ metadata:
   namespace: strimzi-kafka
 type: Opaque
 data:
-  # AWS_ACCESS_KEY_ID: TzhKVk9ZNFFRNkkyUVBEMFNMQUc=
-  # AWS_SECRET_ACCESS_KEY: QU9EQ0NiWFFIWmZRNHZYWXJvTzlzYVY3azFHYnpXMkhBNmphREo4Sg==
-  AWS_ACCESS_KEY_ID: OEUzR0wwVlFaTFFXWVYxOFUyU08=
-  AWS_SECRET_ACCESS_KEY: b0JFOEZCUHdHbFFsSVRiT0k0TFVMY2c0dldmaWZCaUNBZDc3TnV0YQ==
+  AWS_ACCESS_KEY_ID: ""
+  AWS_SECRET_ACCESS_KEY: ""
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -44,7 +42,7 @@ spec:
   - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi
+      storage: 30Gi
   storageClassName: standard
 ---
 apiVersion: apps/v1
@@ -82,6 +80,8 @@ spec:
             secretKeyRef:
               name: iceberg-s3-creds
               key: AWS_SECRET_ACCESS_KEY
+        - name: AWS_REGION
+          value: "us-east-1"
         volumeMounts:
         - name: kafka-connect-storage
           mountPath: /data
