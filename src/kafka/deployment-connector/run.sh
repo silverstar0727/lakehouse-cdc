@@ -11,14 +11,14 @@ export AWS_SECRET_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -
 python create_source_connector.py
 python create_sink_connector.py
 
-curl -X GET http://kafka-connect.34.173.195.18.nip.io/connectors/iceberg-sink/status
+curl -X GET http://kafka-connect.$EXTERNAL_IP.nip.io/connectors/iceberg-sink/status
 
 # curl -X POST -H "Content-Type: application/json" \
-#   http://iceberg-rest-catalog.34.173.195.18.nip.io/v1/namespaces \
+#   http://iceberg-rest-catalog.$EXTERNAL_IP.nip.io/v1/namespaces \
 #   -d '{"namespace": ["fastapi_db"]}'
 
 # curl -X POST -H "Content-Type: application/json" \
-#   http://iceberg-rest-catalog.34.173.195.18.nip.io/v1/namespaces/fastapi_db/tables \
+#   http://iceberg-rest-catalog.$EXTERNAL_IP.nip.io/v1/namespaces/fastapi_db/tables \
 #   -d '{
 #     "name": "test-items",
 #     "schema": {
