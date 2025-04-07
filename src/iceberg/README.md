@@ -1,118 +1,186 @@
-# Apache Iceberg Lakehouse with Change Data Capture (CDC)
+# Iceberg CDC Environment Setup
 
-This project sets up an Apache Iceberg data lakehouse environment with PostgreSQL as the catalog backend and Rook-Ceph providing S3 object storage. The setup is containerized using Kubernetes.
+This guide provides detailed instructions for setting up the Iceberg CDC environment, including PostgreSQL, S3 bucket, and Iceberg REST catalog configuration.
 
-## Architecture Overview
+## Overview
 
-The setup consists of the following components:
-
-- **PostgreSQL**: Serves as the catalog database for Iceberg tables metadata
-- **Iceberg REST Catalog**: Provides a REST API for Iceberg table operations
-- **Rook-Ceph S3**: Object storage for the actual data in the lakehouse
+The Iceberg CDC environment enables efficient data lake operations with support for Change Data Capture (CDC). It integrates with Kubernetes, Rook-Ceph for S3-compatible storage, and PostgreSQL for metadata management.
 
 ## Prerequisites
 
-- Kubernetes cluster
-- Rook-Ceph installed and configured with S3 capabilities
-- `kubectl` configured to access your cluster
-- Storage class `standard-rwo` available in your cluster
+- Kubernetes cluster with at least 3 nodes
+- `kubectl` CLI installed and configured
+- Rook-Ceph storage configured in the cluster
+- Storage class `standard-rwo` available in your Kubernetes cluster
+
+## Architecture
+
+- **PostgreSQL**: Metadata store for Iceberg tables
+- **S3 Bucket**: Storage backend for Iceberg tables
+- **Iceberg REST Catalog**: REST API for managing Iceberg tables
 
 ## Setup Instructions
 
-1. **Create the namespace and deploy PostgreSQL**
+### 1. Deploy PostgreSQL
 
-   The PostgreSQL instance will store Iceberg metadata:
-
-   ```bash
-   kubectl apply -f postgres.yaml
-   ```
-
-2. **Deploy the Iceberg REST Catalog service**
-
-   This will set up the REST API endpoint for Iceberg operations:
-
-   ```bash
-   # Get current S3 credentials from Ceph
-   export S3_ACCESS_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-store-my-user -o jsonpath='{.data.AccessKey}' | base64 --decode)
-   export S3_SECRET_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-store-my-user -o jsonpath='{.data.SecretKey}' | base64 --decode)
-
-   # Create base64 encoded versions for the secret
-   export S3_ACCESS_KEY_B64=$(echo -n "$S3_ACCESS_KEY" | base64)
-   export S3_SECRET_KEY_B64=$(echo -n "$S3_SECRET_KEY" | base64)
-
-   kubectl apply -f <(sed -e 's|s3AccessKey:.*|s3AccessKey: '"$S3_ACCESS_KEY_B64"'|' -e 's|s3SecretKey:.*|s3SecretKey: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
-   ```
-
-3. **Verify the deployment**
-
-   ```bash
-   kubectl -n iceberg get all
-   ```
-
-   You can monitor the pod startup process with:
-
-   ```bash
-   kubectl -n iceberg get all -w
-   ```
-
-## Component Details
-
-### PostgreSQL Database
-
-- **Service**: Available at `iceberg-postgres.iceberg.svc.cluster.local:5432`
-- **Database name**: `iceberg`
-- **User**: `iceberg`
-- **Password**: `12341234` (stored as a Kubernetes secret)
-- **Persistence**: 10Gi volume claim for database storage
-
-### Iceberg REST Catalog
-
-- **Image**: `tabulario/iceberg-rest:0.5.0`
-- **Service**: Available at `iceberg-rest-catalog.iceberg.svc.cluster.local:8181`
-- **Resources**: Requests 500m CPU and 512Mi memory, with limits of 2 CPU and 2Gi memory
-- **JVM settings**: -Xmx1024m -Xms512m
-- **Persistence**: 5Gi volume claim for cache storage
-
-### S3 Storage with Rook-Ceph
-
-- **Bucket name**: Automatically generated with prefix `iceberg-warehouse`
-- **Access method**: Uses S3 endpoint, access key, and secret key from Rook-Ceph
-- **Configuration**: Path style access with region `us-east-1`
-
-## Managing S3 Credentials
-
-If you need to update the S3 credentials (for example after Ceph credentials rotation):
+Deploy a PostgreSQL instance for Iceberg metadata:
 
 ```bash
-# Get current S3 credentials from Ceph
-export S3_ACCESS_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-store-my-user -o jsonpath='{.data.AccessKey}' | base64 --decode)
-export S3_SECRET_KEY=$(kubectl -n rook-ceph get secret rook-ceph-object-user-my-store-my-user -o jsonpath='{.data.SecretKey}' | base64 --decode)
-
-# Create base64 encoded versions for the secret
-export S3_ACCESS_KEY_B64=$(echo -n "$S3_ACCESS_KEY" | base64)
-export S3_SECRET_KEY_B64=$(echo -n "$S3_SECRET_KEY" | base64)
-
-kubectl apply -f <(sed -e 's|s3AccessKey:.*|s3AccessKey: '"$S3_ACCESS_KEY_B64"'|' -e 's|s3SecretKey:.*|s3SecretKey: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
-
-# Restart the Iceberg REST Catalog pod for changes to take effect
-kubectl -n iceberg rollout restart statefulset iceberg-rest-catalog
+kubectl apply -f postgres.yaml
 ```
 
-## Usage
+- Namespace: `iceberg`
+- Database: `iceberg`
+- User: `iceberg`
+- Password: `icebergpassword`
 
-To connect to the Iceberg REST Catalog from external applications, configure your client with:
+Verify the deployment:
 
-- **Catalog URI**: `http://[CLUSTER-IP]:8181` (or use NodePort if accessing externally)
-- **Warehouse location**: `s3://iceberg-warehouse`
+```bash
+kubectl -n iceberg get pods
+kubectl -n iceberg get svc postgres
+```
 
-## Security Notes
+### 2. Create S3 Bucket
 
-- Default credentials are used in this demo setup and should be changed in production
-- The S3 access keys are stored as Kubernetes secrets
-- The PostgreSQL password is stored as a Kubernetes secret
+Create an S3-compatible bucket using Rook-Ceph:
+
+```bash
+kubectl apply -f bucket.yaml
+```
+
+Retrieve the bucket details:
+
+```bash
+kubectl -n iceberg get obc
+```
+
+Extract the S3 credentials:
+
+```bash
+export S3_ACCESS_KEY_B64=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_ACCESS_KEY_ID}')
+export S3_SECRET_KEY_B64=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}')
+```
+
+### 3. Configure Iceberg REST Catalog
+
+Update the `rest-catalog.yaml` file with the S3 credentials:
+
+```bash
+kubectl apply -f <(sed -e 's|AWS_ACCESS_KEY_ID:.*|AWS_ACCESS_KEY_ID: '"$S3_ACCESS_KEY_B64"'|' -e 's|AWS_SECRET_ACCESS_KEY:.*|AWS_SECRET_ACCESS_KEY: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
+```
+
+Deploy the Iceberg REST catalog:
+
+```bash
+kubectl apply -f rest-catalog.yaml
+```
+
+Verify the deployment:
+
+```bash
+kubectl -n iceberg get pods
+kubectl -n iceberg get svc iceberg-rest-catalog
+```
+
+### 4. Test Iceberg REST Catalog
+
+Retrieve the external IP of the REST catalog service:
+
+```bash
+export EXTERNAL_IP=$(kubectl get svc nginx-ingress-ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+```
+
+Use the following commands to test the Iceberg REST catalog:
+
+#### Create a Namespace
+
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  http://$EXTERNAL_IP/v1/namespaces \
+  -d '{"namespace": ["example_namespace"]}'
+```
+
+#### Create a Table
+
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  http://$EXTERNAL_IP/v1/namespaces/example_namespace/tables \
+  -d '{
+    "name": "example_table",
+    "schema": {
+      "type": "struct",
+      "fields": [
+        {"id": 1, "name": "id", "type": "int", "required": true},
+        {"id": 2, "name": "name", "type": "string", "required": false}
+      ]
+    },
+    "properties": {
+      "write.format.default": "parquet"
+    }
+  }'
+```
+
+### 5. Monitor the Environment
+
+Monitor the status of the deployed components:
+
+```bash
+kubectl -n iceberg get all
+```
+
+## Configuration Details
+
+### PostgreSQL Configuration
+
+- Persistent storage: 10Gi
+- Storage class: `standard-rwo`
+- Service: Exposed on port `5432`
+
+### S3 Bucket Configuration
+
+- Bucket name: `iceberg-warehouse`
+- Storage class: `rook-ceph-delete-bucket`
+
+### Iceberg REST Catalog Configuration
+
+- Image: `tabulario/iceberg-rest:1.6.0`
+- REST port: `8181`
+- S3 endpoint: `http://rook-ceph-rgw-my-store.rook-ceph.svc:80`
+- Metadata store: PostgreSQL
+
+## Cleanup
+
+To delete all resources:
+
+```bash
+kubectl delete namespace iceberg
+```
 
 ## Troubleshooting
 
-- Check pod logs: `kubectl -n iceberg logs -f <pod-name>`
-- Verify services are running: `kubectl -n iceberg get services`
-- Ensure S3 bucket is properly created: `kubectl -n iceberg get objectbucketclaims`
+### Common Issues
+
+1. **PostgreSQL not starting**: Check the PVC and storage class configuration.
+   ```bash
+   kubectl -n iceberg describe pvc postgres-pvc
+   kubectl -n iceberg logs -l app=postgres
+   ```
+
+2. **S3 bucket not created**: Verify the Rook-Ceph configuration.
+   ```bash
+   kubectl -n rook-ceph get cephobjectstore
+   kubectl -n rook-ceph logs -l app=rook-ceph-rgw
+   ```
+
+3. **REST catalog not accessible**: Check the service and ingress configuration.
+   ```bash
+   kubectl -n iceberg get svc iceberg-rest-catalog
+   kubectl -n ingress-nginx get svc
+   ```
+
+## Resources
+
+- [Apache Iceberg Documentation](https://iceberg.apache.org/)
+- [Rook Documentation](https://rook.io/docs/rook/latest/)
+- [PostgreSQL Documentation](https://www.postgresql.org/docs/)

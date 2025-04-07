@@ -4,90 +4,73 @@ metadata:
   name: iceberg
 ---
 apiVersion: v1
-kind: Service
+kind: ConfigMap
 metadata:
-  name: iceberg-postgres-headless
   namespace: iceberg
-spec:
-  clusterIP: None
-  selector:
-    app: iceberg-postgres
-  ports:
-  - port: 5432
-    targetPort: 5432
+  name: postgres-config
+  labels:
+    app: postgres
+data:
+  POSTGRES_DB: iceberg
+  POSTGRES_USER: iceberg
+  POSTGRES_PASSWORD: icebergpassword
 ---
 apiVersion: v1
-kind: Service
+kind: PersistentVolumeClaim
 metadata:
-  name: iceberg-postgres
+  name: postgres-pvc
   namespace: iceberg
 spec:
-  selector:
-    app: iceberg-postgres
-  ports:
-  - port: 5432
-    targetPort: 5432
+  storageClassName: standard-rwo # Change this to your storage class
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
 ---
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
-  name: iceberg-postgres
   namespace: iceberg
+  name: postgres
 spec:
-  serviceName: "iceberg-postgres-headless"
   replicas: 1
   selector:
     matchLabels:
-      app: iceberg-postgres
+      app: postgres
   template:
     metadata:
       labels:
-        app: iceberg-postgres
+        app: postgres
     spec:
       containers:
-      - name: postgres
-        image: postgres:14
-        env:
-        - name: POSTGRES_DB
-          value: iceberg
-        - name: POSTGRES_USER
-          value: iceberg
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secrets
-              key: password
-        - name: PGDATA
-          value: /var/lib/postgresql/data/pgdata
-        ports:
-        - containerPort: 5432
-          name: postgres
-        volumeMounts:
-        - name: postgres-data
-          mountPath: /var/lib/postgresql/data
-        readinessProbe:
-          exec:
-            command:
-            - pg_isready
-            - -U
-            - iceberg
-          initialDelaySeconds: 5
-          periodSeconds: 10
-  volumeClaimTemplates:
-  - metadata:
-      name: postgres-data
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      storageClassName: standard-rwo
-      resources:
-        requests:
-          storage: 10Gi
+        - name: postgres
+          image: postgres:14
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: postgres-config
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: postgres-storage
+              subPath: postgres-data
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: postgres-pvc
 ---
 apiVersion: v1
-kind: Secret
+kind: Service
 metadata:
-  name: postgres-secrets
   namespace: iceberg
-type: Opaque
-data:
-  password: MTIzNDEyMzQ=  # base64 encoded '12341234'
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: postgres

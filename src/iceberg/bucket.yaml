@@ -1,0 +1,8 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: iceberg-warehouse-bucket
+  namespace: iceberg
+spec:
+  bucketName: iceberg-warehouse
+  storageClassName: rook-ceph-delete-bucket

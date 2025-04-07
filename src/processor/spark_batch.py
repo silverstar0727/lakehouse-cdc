@@ -15,8 +15,8 @@ from spark_session import create_iceberg_spark_session
 
 
 EXTERNAL_IP = os.getenv("EXTERNAL_IP")
-S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY")
-S3_SECRET_KEY = os.getenv("S3_SECRET_KEY")
+OBC_ACCESS_KEY = os.getenv("OBC_ACCESS_KEY")
+OBC_SECRET_KEY = os.getenv("OBC_SECRET_KEY")
 ICEBERG_WAREHOUSE_PATH = os.getenv("ICEBERG_WAREHOUSE_PATH")
 
 BOOTSTRAP_SERVER_URL = os.getenv("BOOTSTRAP_SERVER_URL")
@@ -437,7 +437,7 @@ def main():
     """
     try:
         # Create Spark session
-        spark = create_iceberg_spark_session(EXTERNAL_IP, S3_ACCESS_KEY, S3_SECRET_KEY, ICEBERG_WAREHOUSE_PATH)
+        spark = create_iceberg_spark_session(EXTERNAL_IP, OBC_ACCESS_KEY, OBC_SECRET_KEY, ICEBERG_WAREHOUSE_PATH)
         
         # Create namespace (if it doesn't exist)
         namespace = "fastapi_db"

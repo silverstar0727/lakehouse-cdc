@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iceberg-s3-creds
+  namespace: strimzi-kafka
+type: Opaque
+data:
+  AWS_ACCESS_KEY_ID: ""
+  AWS_SECRET_ACCESS_KEY: ""
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-connect-config
+  namespace: strimzi-kafka
+data:
+  CONNECT_BOOTSTRAP_SERVERS: "kraft-cluster-kafka-bootstrap.strimzi-kafka.svc.cluster.local:9092"
+  CONNECT_REST_PORT: "8083"
+  CONNECT_GROUP_ID: "connect-cluster"
+  CONNECT_CONFIG_STORAGE_TOPIC: "connect-configs"
+  CONNECT_OFFSET_STORAGE_TOPIC: "connect-offsets"
+  CONNECT_STATUS_STORAGE_TOPIC: "connect-statuses"
+  CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+  CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+  CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "true"
+  CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "true"
+  CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
+  CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"
+  CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "3"
+  CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "3"
+  CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "3"
+  CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components,/data/connect-jars"
+  CONNECT_CONNECTOR_CLIENT_CONFIG_OVERRIDE_POLICY: "All"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-connect-pvc
+  namespace: strimzi-kafka
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 30Gi
+  storageClassName: standard
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-connect
+  namespace: strimzi-kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-connect
+  template:
+    metadata:
+      labels:
+        app: kafka-connect
+    spec:
+      containers:
+      - name: kafka-connect
+        image: confluentinc/cp-kafka-connect:7.7.2
+        ports:
+        - containerPort: 8083
+          name: http
+        envFrom:
+        - configMapRef:
+            name: kafka-connect-config
+        env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: iceberg-s3-creds
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: iceberg-s3-creds
+              key: AWS_SECRET_ACCESS_KEY
+        - name: AWS_REGION
+          value: "us-east-1"
+        volumeMounts:
+        - name: kafka-connect-storage
+          mountPath: /data
+        command: [ "/bin/bash", "-c" ]
+        args:
+        - |
+          echo "Installing Connectors";
+          confluent-hub install --no-prompt tabular/iceberg-kafka-connect:0.6.19;
+          confluent-hub install --no-prompt debezium/debezium-connector-postgresql:2.5.4;
+          echo "Launching Kafka Connect worker";
+          /etc/confluent/docker/run;
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8083
+          initialDelaySeconds: 90
+          periodSeconds: 10
+      volumes:
+      - name: kafka-connect-storage
+        persistentVolumeClaim:
+          claimName: kafka-connect-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-connect
+  namespace: strimzi-kafka
+spec:
+  selector:
+    app: kafka-connect
+  ports:
+  - port: 8083
+    targetPort: 8083
+    name: http

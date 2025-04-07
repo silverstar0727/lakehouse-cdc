@@ -5,9 +5,6 @@ metadata:
   namespace: strimzi-kafka
   labels:
     app: kafdrop
-    mlops.component: message-broker-ui
-    mlops.vendor: open-source
-    mlops.stage: data-ingestion
 spec:
   replicas: 1
   selector:

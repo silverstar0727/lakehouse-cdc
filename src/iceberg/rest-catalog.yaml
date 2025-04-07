@@ -1,73 +1,21 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: iceberg-rest-catalog-config
-  namespace: iceberg
-data:
-  catalog-config.yaml: |
-    catalogs:
-      default:
-        type: jdbc
-        url: jdbc:postgresql://iceberg-postgres:5432/iceberg
-        username: iceberg
-        password: ${CATALOG_PASSWORD}
-        warehouse: s3://iceberg-warehouse
-    warehouse:
-      type: s3
-      s3.endpoint: http://rook-ceph-rgw-my-store.rook-ceph.svc.cluster.local
-      s3.access-key-id: ${S3_ACCESS_KEY}
-      s3.secret-access-key: ${S3_SECRET_KEY}
-      s3.path-style-access: true
-      s3.region: us-east-1
-    rest:
-      port: 8181
+
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: iceberg-rest-catalog-secrets
+  name: iceberg-s3-credentials
   namespace: iceberg
 type: Opaque
 data:
-  catalogPassword: MTIzNDEyMzQ=  # base64 encoded '12341234'
-  s3AccessKey: ""  # Updated from Ceph
-  s3SecretKey: ""  # Updated from Ceph
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: iceberg-rest-catalog-headless
-  namespace: iceberg
-spec:
-  clusterIP: None
-  selector:
-    app: iceberg-rest-catalog
-  ports:
-  - port: 8181
-    targetPort: 8181
-    name: rest
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: iceberg-rest-catalog
-  namespace: iceberg
-spec:
-  type: NodePort
-  selector:
-    app: iceberg-rest-catalog
-  ports:
-  - port: 8181
-    targetPort: 8181
-    name: rest
+  AWS_ACCESS_KEY_ID: ""
+  AWS_SECRET_ACCESS_KEY: ""
 ---
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: iceberg-rest-catalog
   namespace: iceberg
 spec:
-  serviceName: "iceberg-rest-catalog-headless"
   replicas: 1
   selector:
     matchLabels:
@@ -78,8 +26,51 @@ spec:
         app: iceberg-rest-catalog
     spec:
       containers:
-      - name: rest-catalog
-        image: tabulario/iceberg-rest:0.5.0
+      - name: iceberg-rest
+        image: tabulario/iceberg-rest:1.6.0
+        ports:
+        - containerPort: 8181
+        env:
+        
+          # S3 credentials
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: iceberg-s3-credentials
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: iceberg-s3-credentials
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_REGION
+            value: "us-east-1"
+          - name: AWS_S3_ENDPOINT_URL
+            value: "http://rook-ceph-rgw-my-store.rook-ceph.svc:80"
+
+          # Iceberg REST server settings
+          - name: REST_PORT
+            value: "8181"
+
+          # catalog settings
+          - name: CATALOG_IMPL
+            value: "org.apache.iceberg.jdbc.JdbcCatalog"
+          - name: CATALOG_URI
+            value: "jdbc:postgresql://postgres.iceberg.svc:5432/iceberg"
+          - name: CATALOG_JDBC_USER
+            value: "iceberg"
+          - name: CATALOG_JDBC_PASSWORD
+            value: "icebergpassword"
+          - name: CATALOG_WAREHOUSE
+            value: "s3a://iceberg-warehouse/"
+
+          # S3 settings
+          - name: CATALOG_IO__IMPL
+            value: "org.apache.iceberg.aws.s3.S3FileIO"
+          - name: CATALOG_S3_ENDPOINT
+            value: "http://rook-ceph-rgw-my-store.rook-ceph.svc:80"
+          - name: CATALOG_S3_PATH__STYLE__ACCESS
+            value: "true"
         resources:
           requests:
             cpu: "500m"
@@ -87,66 +78,17 @@ spec:
           limits:
             cpu: "2"
             memory: "2Gi"
-        env:
-        - name: CATALOG_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: iceberg-rest-catalog-secrets
-              key: catalogPassword
-        - name: S3_ACCESS_KEY
-          valueFrom:
-            secretKeyRef:
-              name: iceberg-rest-catalog-secrets
-              key: s3AccessKey
-        - name: S3_SECRET_KEY
-          valueFrom:
-            secretKeyRef:
-              name: iceberg-rest-catalog-secrets
-              key: s3SecretKey
-        # Add Java options
-        - name: JAVA_OPTS
-          value: "-Xmx1024m -Xms512m"
-        ports:
-        - containerPort: 8181
-          name: rest
-        volumeMounts:
-        - name: config-volume
-          mountPath: /etc/iceberg/catalog-config.yaml
-          subPath: catalog-config.yaml
-        - name: cache-volume
-          mountPath: /tmp/iceberg-cache
-        # Modify probe: use TCP socket check instead of HTTP
-        livenessProbe:
-          tcpSocket:
-            port: 8181
-          initialDelaySeconds: 60 
-          periodSeconds: 20
-        readinessProbe:
-          tcpSocket:
-            port: 8181
-          initialDelaySeconds: 30
-          periodSeconds: 10
-      volumes:
-      - name: config-volume
-        configMap:
-          name: iceberg-rest-catalog-config
-  volumeClaimTemplates:
-  - metadata:
-      name: cache-volume
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      storageClassName: standard-rwo
-      resources:
-        requests:
-          storage: 5Gi
+      
 ---
-# ObjectBucketClaim for creating S3 bucket in Rook-Ceph
-apiVersion: objectbucket.io/v1alpha1
-kind: ObjectBucketClaim
+apiVersion: v1
+kind: Service
 metadata:
-  name: iceberg-warehouse-bucket
+  name: iceberg-rest-catalog
   namespace: iceberg
 spec:
-  bucketName: iceberg-warehouse
-  storageClassName: rook-ceph-delete-bucket
----
+  selector:
+    app: iceberg-rest-catalog
+  ports:
+  - port: 8181
+    targetPort: 8181
+
