@@ -252,69 +252,7 @@ class DataValidation:
                 "is_valid": False,
                 "timestamp": datetime.now().isoformat()
             }
-
-    # def validate_checksum(self, table_name, columns, iceberg_table):
-    #     """
-    #     Validate data content using checksum
         
-    #     Args:
-    #         table_name (str): PostgreSQL table name
-    #         columns (list): List of columns to use for checksum calculation
-    #         iceberg_table (str): Iceberg table name
-            
-    #     Returns:
-    #         dict: Validation results and metadata
-    #     """
-    #     try:
-    #         # Calculate checksum from PostgreSQL
-    #         pg_conn = self.connect_postgres()
-    #         pg_cursor = pg_conn.cursor()
-            
-    #         columns_concat = "||'#'||".join([f"COALESCE(CAST({col} AS VARCHAR), '')" for col in columns])
-    #         pg_cursor.execute(f"SELECT MD5(STRING_AGG({columns_concat}, ',')) FROM {table_name}")
-    #         pg_checksum = pg_cursor.fetchone()[0]
-    #         pg_cursor.close()
-    #         pg_conn.close()
-            
-    #         # Calculate checksum from Iceberg (using Spark SQL)
-    #         spark = self.connect_spark()
-            
-    #         # Create expression to convert columns to string and concatenate
-    #         concat_expr = "concat_ws('#', " + ", ".join([f"coalesce(cast({col} as string), '')" for col in columns]) + ")"
-            
-    #         # Create Spark DataFrame and calculate checksum
-    #         df = spark.read.format("iceberg").load(iceberg_table)
-            
-    #         from pyspark.sql.functions import expr, concat_ws, hash, collect_list, md5
-            
-    #         # Combine all rows into a single string and calculate MD5 hash
-    #         iceberg_checksum = df.selectExpr(concat_expr).orderBy(concat_expr).select(
-    #             md5(concat_ws(",", collect_list(concat_expr)))).collect()[0][0]
-            
-    #         # Compare results
-    #         is_valid = pg_checksum == iceberg_checksum
-            
-    #         result = {
-    #             "validation_type": "checksum",
-    #             "source_checksum": pg_checksum,
-    #             "target_checksum": iceberg_checksum,
-    #             "is_valid": is_valid,
-    #             "columns_validated": columns,
-    #             "timestamp": datetime.now().isoformat()
-    #         }
-            
-    #         logger.info(f"Checksum validation result: {result}")
-    #         return result
-            
-    #     except Exception as e:
-    #         logger.error(f"Error during checksum validation: {e}")
-    #         return {
-    #             "validation_type": "checksum",
-    #             "error": str(e),
-    #             "is_valid": False,
-    #             "timestamp": datetime.now().isoformat()
-    #         }
-
     def validate_checksum(self, table_name, columns, iceberg_table):
         """
         Validate data content using checksum
