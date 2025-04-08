@@ -452,6 +452,7 @@ def main():
         
         # Start consumer for each table
         for table_name, topic in table_mappings.items():
+            table_name = table_name + "_pyspark"
             print(f"Setting up consumer for table: {table_name}, topic: {topic}")
             consume_kafka_messages(spark, topic, namespace, table_name)
             

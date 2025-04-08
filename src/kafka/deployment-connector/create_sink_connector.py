@@ -60,8 +60,8 @@ CONNECTOR_CONFIG = {
         # 테이블 설정
         "iceberg.tables.auto-create-enabled": "true",
         
-        # ID 열 설정 - 중요: 이 부분이 핵심 문제였습니다
-        "iceberg.tables.default-id-columns": "id",  # 테이블의 ID 컬럼 지정
+        # ID 열 설정
+        "iceberg.tables.default-id-columns": "id",
         
         # 컨버터 설정
         "key.converter": "org.apache.kafka.connect.json.JsonConverter",
@@ -72,20 +72,14 @@ CONNECTOR_CONFIG = {
         # 추가 옵션
         "consumer.auto.offset.reset": "earliest",
         
-        # DELETE 처리 설정
-        "iceberg.tables.cdc-field": "_deleted",  # CDC 필드 설정
-        "iceberg.tables.upsert-mode-enabled": "true",  # 업서트 모드 활성화
+        # DELETE 처리 설정 - 단일 일관된 방식으로 변경
+        "iceberg.tables.cdc-field": "is_iceberg_deleted",  # 새로운 이름으로 변경
+        "iceberg.tables.upsert-mode-enabled": "true",
         
-        # # 변환 설정
-        # "transforms": "RenameField",
-        # "transforms.RenameField.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
-        # "transforms.RenameField.renames": "__deleted:_deleted",
-        # # Add this to your CONNECTOR_CONFIG in the transforms section
-        "transforms": "RenameField,ConvertDeleted",
-        "transforms.RenameField.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
-        "transforms.RenameField.renames": "__deleted:_deleted",
-        "transforms.ConvertDeleted.type": "org.apache.kafka.connect.transforms.Cast$Value",
-        "transforms.ConvertDeleted.spec": "_deleted:boolean"
+        # SMT 설정 개선 - 단일 변환으로 통합
+        "transforms": "DeleteHandler",
+        "transforms.DeleteHandler.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+        "transforms.DeleteHandler.renames": "__deleted:is_iceberg_deleted"  # __deleted를 is_deleted로 일관되게 변경
     }
 }
 

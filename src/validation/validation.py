@@ -228,7 +228,14 @@ class DataValidation:
             
             # Get row count from Iceberg
             spark = self.connect_spark()
-            iceberg_count = spark.read.format("iceberg").load(iceberg_table).count()
+            
+            iceberg_df = spark.read.format("iceberg").load(iceberg_table)
+            
+            if "is_iceberg_deleted" in iceberg_df.columns:
+                iceberg_count = iceberg_df.filter("is_iceberg_deleted = false OR is_iceberg_deleted IS NULL").count()
+            else:
+                iceberg_count = iceberg_df.count()
+                logger.warning("is_iceberg_deleted 필드를 찾을 수 없어 전체 레코드를 카운트합니다.")
             
             # Calculate results
             count_diff = abs(pg_count - iceberg_count)
@@ -247,7 +254,7 @@ class DataValidation:
             
             logger.info(f"Row count validation result: {result}")
             return result
-        
+            
         except Exception as e:
             logger.error(f"Error during row count validation: {e}")
             return {
