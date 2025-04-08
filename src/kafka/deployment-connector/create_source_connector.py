@@ -29,10 +29,22 @@ CONNECTOR_CONFIG = {
         "slot.name": "debezium_slot",
         "table.include.list": "public.items",
         "snapshot.mode": "initial",
-        "transforms": "unwrap",
+        
+        # 변환 체인 정의 (unwrap, extractTs)
+        "transforms": "unwrap,extractTs",
+        
+        # 기존 unwrap 변환 설정
         "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
         "transforms.unwrap.drop.tombstones": "false",
-        "transforms.unwrap.delete.handling.mode": "rewrite"
+        "transforms.unwrap.delete.handling.mode": "rewrite",
+        
+        # 소스 타임스탬프 사용
+        "transforms.unwrap.add.fields": "ts_ms",
+        
+        # 타임스탬프 변환 - 내장 필드 활용
+        "transforms.extractTs.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+        "transforms.extractTs.renames": "ts_ms:event_timestamp"
+    
     }
 }
 

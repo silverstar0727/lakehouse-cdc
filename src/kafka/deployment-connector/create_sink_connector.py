@@ -40,7 +40,7 @@ CONNECTOR_CONFIG = {
     "name": CONNECTOR_NAME,
     "config": {
         "connector.class": "io.tabular.iceberg.connect.IcebergSinkConnector",
-        "tasks.max": "1",
+        "tasks.max": "2",
         "topics": KAFKA_TOPIC,
         "iceberg.tables": TABLE_FULL_NAME,
         
@@ -56,6 +56,10 @@ CONNECTOR_CONFIG = {
         "iceberg.catalog.s3.access-key-id": AWS_ACCESS_KEY,
         "iceberg.catalog.s3.secret-access-key": AWS_SECRET_KEY,
         "iceberg.catalog.s3.region": "us-east-1",
+
+        # 메타데이터 및 스키마 관련 설정 추가
+        "iceberg.tables.evolve-schema-enabled": "true",  # Debezium에서 추가된 필드 자동 추가
+        "iceberg.tables.schema-force-optional": "true",  # 새 필드를 optional로 설정
         
         # 테이블 설정
         "iceberg.tables.auto-create-enabled": "true",
@@ -75,6 +79,9 @@ CONNECTOR_CONFIG = {
         # DELETE 처리 설정 - 단일 일관된 방식으로 변경
         "iceberg.tables.cdc-field": "is_iceberg_deleted",  # 새로운 이름으로 변경
         "iceberg.tables.upsert-mode-enabled": "true",
+
+        # interval 설정
+        "iceberg.control.commit.interval-ms": "10000", # 10초마다 커밋
         
         # SMT 설정 개선 - 단일 변환으로 통합
         "transforms": "DeleteHandler",
