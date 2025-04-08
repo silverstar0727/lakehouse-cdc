@@ -32,12 +32,14 @@ metadata:
   labels:
     app: backend-postgres
 spec:
+  type: LoadBalancer     # 헤드리스 서비스에서 LoadBalancer로 변경
   ports:
   - port: 5432
+    targetPort: 5432
     name: backend-postgres
   selector:
     app: backend-postgres
-  clusterIP: None
+  # clusterIP: None     # LoadBalancer를 사용하므로 이 줄은 제거됨
 
 ---
 apiVersion: v1

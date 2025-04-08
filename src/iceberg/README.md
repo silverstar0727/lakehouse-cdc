@@ -64,16 +64,10 @@ export S3_SECRET_KEY_B64=$(kubectl get secret -n iceberg iceberg-warehouse-bucke
 
 ### 3. Configure Iceberg REST Catalog
 
-Update the `rest-catalog.yaml` file with the S3 credentials:
+Update and Deploy the `rest-catalog.yaml` file with the S3 credentials:
 
 ```bash
 kubectl apply -f <(sed -e 's|AWS_ACCESS_KEY_ID:.*|AWS_ACCESS_KEY_ID: '"$S3_ACCESS_KEY_B64"'|' -e 's|AWS_SECRET_ACCESS_KEY:.*|AWS_SECRET_ACCESS_KEY: '"$S3_SECRET_KEY_B64"'|' rest-catalog.yaml)
-```
-
-Deploy the Iceberg REST catalog:
-
-```bash
-kubectl apply -f rest-catalog.yaml
 ```
 
 Verify the deployment:

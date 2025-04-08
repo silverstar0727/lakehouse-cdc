@@ -13,11 +13,11 @@ export EXTERNAL_IP=$(kubectl get svc nginx-ingress-ingress-nginx-controller -n i
 
 # test if the iceberg-rest-catalog is running
 curl -X POST -H "Content-Type: application/json" \
-  http://iceberg-rest-catalog.34.173.195.18.nip.io/v1/namespaces \
+  http://iceberg-rest-catalog.$EXTERNAL_IP.nip.io/v1/namespaces \
   -d '{"namespace": ["example_namespace"]}'
 
 curl -X POST -H "Content-Type: application/json" \
-  http://iceberg-rest-catalog.34.173.195.18.nip.io/v1/namespaces/example_namespace/tables \
+  http://iceberg-rest-catalog.$EXTERNAL_IP.nip.io/v1/namespaces/example_namespace/tables \
   -d '{
     "name": "simple_table3",
     "schema": {
