@@ -206,10 +206,10 @@ class DataValidation:
         except KafkaException as e:
             logger.error(f"Kafka connection failed: {e}")
             raise
-        
-    def validate_row_count(self, table_name, iceberg_table):
+
+    def validate_row_count(self, table_name, iceberg_table, timestamp_column="__ts_ms"):
         """
-        Validate row count between source and target systems using modified_at
+        Validate row count between source and target systems using timestamp_column
         """
         try:
             # PostgreSQL row count
@@ -228,11 +228,11 @@ class DataValidation:
             # 스키마 확인 및 유연한 처리
             columns = iceberg_df.columns
             
-            # modified_at과 is_iceberg_deleted 컬럼 존재 여부 확인
-            if "modified_at" in columns and "is_iceberg_deleted" in columns:
-                # 각 ID의 최신 버전만 고려 (modified_at 기준으로 정렬)
+            # timestamp_column, is_iceberg_deleted 컬럼 존재 여부 확인
+            if timestamp_column in columns and "is_iceberg_deleted" in columns:
+                # 각 ID의 최신 버전만 고려 (timestamp_column 기준으로 정렬)
                 window_spec = Window.partitionBy("id").orderBy(
-                    col("modified_at").desc()
+                    col(timestamp_column).desc()
                 )
                 
                 filtered_df = iceberg_df.withColumn("row_num", 
@@ -250,8 +250,8 @@ class DataValidation:
                 
                 # 최신 레코드의 시간 범위 분석
                 time_analysis = filtered_df.agg(
-                    min("modified_at").alias("earliest_record"),
-                    max("modified_at").alias("latest_record")
+                    min(timestamp_column).alias("earliest_record"),
+                    max(timestamp_column).alias("latest_record")
                 ).collect()[0]
                 
                 logger.info(f"Iceberg 테이블 진단:")
@@ -264,7 +264,7 @@ class DataValidation:
             else:
                 # 필요한 컬럼이 없는 경우 대비
                 iceberg_count = iceberg_df.count()
-                logger.warning("필요한 컬럼(modified_at, is_iceberg_deleted)을 찾을 수 없어 전체 레코드를 카운트합니다.")
+                logger.warning(f"필요한 컬럼({timestamp_column}, is_iceberg_deleted)을 찾을 수 없어 전체 레코드를 카운트합니다.")
             
             # 결과 계산
             count_diff = abs(pg_count - iceberg_count)
@@ -1145,11 +1145,11 @@ if __name__ == "__main__":
             print("Error: Both PostgreSQL table and Iceberg table are required.")
             sys.exit(1)
         
-        result = validator.validate_row_count(args.pg_table, args.iceberg_table)
+        result = validator.validate_row_count(args.pg_table, args.iceberg_table, args.timestamp_column)
         print(f"Row count validation result: {json.dumps(result, indent=2, default=str)}")
 
-        ret = validator.diagnose_specific_differences(args.pg_table, args.iceberg_table)
-        print(f"Row count differences: {json.dumps(ret, indent=2, default=str)}")
+        # ret = validator.diagnose_specific_differences(args.pg_table, args.iceberg_table)
+        # print(f"Row count differences: {json.dumps(ret, indent=2, default=str)}")
     
     elif args.test == 'checksum':
         if not args.pg_table or not args.iceberg_table or not args.columns:

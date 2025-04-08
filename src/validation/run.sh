@@ -43,7 +43,7 @@ CONNECTOR_NAME="postgres-connector"
 KAFKA_CONNECT_URL="http://kafka-connect.$EXTERNAL_IP.nip.io"
 
 # 검증 설정
-TIMESTAMP_COLUMN="created_at"
+TIMESTAMP_COLUMN="__ts_ms"
 COLUMNS="id,name,description,price,on_offer"
 SAMPLE_SIZE="100"
 
