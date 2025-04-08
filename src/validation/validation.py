@@ -209,7 +209,7 @@ class DataValidation:
         
     def validate_row_count(self, table_name, iceberg_table):
         """
-        Validate row count between source and target systems
+        Validate row count between source and target systems using modified_at
         """
         try:
             # PostgreSQL row count
@@ -225,11 +225,14 @@ class DataValidation:
             
             iceberg_df = spark.read.format("iceberg").load(iceberg_table)
             
-            if "is_iceberg_deleted" in iceberg_df.columns:
-                # 각 ID의 최신 버전만 고려 (ID 기준으로 정렬)
+            # 스키마 확인 및 유연한 처리
+            columns = iceberg_df.columns
+            
+            # modified_at과 is_iceberg_deleted 컬럼 존재 여부 확인
+            if "modified_at" in columns and "is_iceberg_deleted" in columns:
+                # 각 ID의 최신 버전만 고려 (modified_at 기준으로 정렬)
                 window_spec = Window.partitionBy("id").orderBy(
-                    # 정렬 기준을 가용 가능한 컬럼으로 변경
-                    col("id").desc()  # 또는 다른 대체 정렬 기준
+                    col("modified_at").desc()
                 )
                 
                 filtered_df = iceberg_df.withColumn("row_num", 
@@ -245,14 +248,23 @@ class DataValidation:
                 deleted_records = iceberg_df.filter("is_iceberg_deleted = 'true'").count()
                 duplicate_ids = iceberg_df.groupBy("id").count().filter("count > 1").count()
                 
+                # 최신 레코드의 시간 범위 분석
+                time_analysis = filtered_df.agg(
+                    min("modified_at").alias("earliest_record"),
+                    max("modified_at").alias("latest_record")
+                ).collect()[0]
+                
                 logger.info(f"Iceberg 테이블 진단:")
                 logger.info(f"전체 레코드 수: {total_records}")
                 logger.info(f"삭제된 레코드 수: {deleted_records}")
                 logger.info(f"중복 ID 수: {duplicate_ids}")
+                logger.info(f"최신 레코드 시간 범위:")
+                logger.info(f"  최초 레코드: {time_analysis['earliest_record']}")
+                logger.info(f"  최종 레코드: {time_analysis['latest_record']}")
             else:
-                # is_iceberg_deleted 필드 없는 경우 대비
+                # 필요한 컬럼이 없는 경우 대비
                 iceberg_count = iceberg_df.count()
-                logger.warning("is_iceberg_deleted 필드를 찾을 수 없어 전체 레코드를 카운트합니다.")
+                logger.warning("필요한 컬럼(modified_at, is_iceberg_deleted)을 찾을 수 없어 전체 레코드를 카운트합니다.")
             
             # 결과 계산
             count_diff = abs(pg_count - iceberg_count)
@@ -271,6 +283,8 @@ class DataValidation:
                 "total_iceberg_records": total_records if 'total_records' in locals() else None,
                 "deleted_records": deleted_records if 'deleted_records' in locals() else None,
                 "duplicate_ids": duplicate_ids if 'duplicate_ids' in locals() else None,
+                "earliest_record": time_analysis['earliest_record'] if 'time_analysis' in locals() else None,
+                "latest_record": time_analysis['latest_record'] if 'time_analysis' in locals() else None,
                 "difference": count_diff,
                 "difference_percentage": count_diff_pct,
                 "is_valid": is_valid,

@@ -122,7 +122,10 @@ spark.sql("SHOW NAMESPACES IN iceberg").show()
 
 # 테이블 삭제 (PURGE를 사용하여 물리적 데이터도 함께 삭제)
 for table in ["items_spark", "items"]:
-    spark.sql(f"DROP TABLE iceberg.fastapi_db.{table} PURGE")
+    try:
+        spark.sql(f"DROP TABLE iceberg.fastapi_db.{table} PURGE")
+    except Exception as e:
+        print(f"테이블 삭제 중 오류 발생: {e}")
 
 # 종료
 spark.stop()

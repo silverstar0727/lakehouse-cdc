@@ -7,9 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update, delete
 
+
 from contextlib import asynccontextmanager
 
-from sqlalchemy import Column, Integer, String, Boolean
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
 from database import Base
 
 class Item(Base):
@@ -20,6 +21,9 @@ class Item(Base):
     description = Column(String(255))
     price = Column(Integer)
     on_offer = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    modified_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    is_deleted = Column(Boolean, default=False, nullable=False)
 
     def __repr__(self):
         return f"<Item name={self.name} price={self.price}>"
