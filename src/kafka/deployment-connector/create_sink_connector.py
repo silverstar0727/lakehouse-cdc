@@ -76,10 +76,16 @@ CONNECTOR_CONFIG = {
         "iceberg.tables.cdc-field": "_deleted",  # CDC 필드 설정
         "iceberg.tables.upsert-mode-enabled": "true",  # 업서트 모드 활성화
         
-        # 변환 설정
-        "transforms": "RenameField",
+        # # 변환 설정
+        # "transforms": "RenameField",
+        # "transforms.RenameField.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+        # "transforms.RenameField.renames": "__deleted:_deleted",
+        # # Add this to your CONNECTOR_CONFIG in the transforms section
+        "transforms": "RenameField,ConvertDeleted",
         "transforms.RenameField.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
-        "transforms.RenameField.renames": "__deleted:_deleted"
+        "transforms.RenameField.renames": "__deleted:_deleted",
+        "transforms.ConvertDeleted.type": "org.apache.kafka.connect.transforms.Cast$Value",
+        "transforms.ConvertDeleted.spec": "_deleted:boolean"
     }
 }
 

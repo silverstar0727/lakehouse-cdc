@@ -25,7 +25,7 @@ BOOTSTRAP_SERVER_URL = os.getenv("BOOTSTRAP_SERVER_URL")
 kafka_config = {
     'bootstrap.servers': f"{BOOTSTRAP_SERVER_URL}:9094",
     'group.id': 'spark-iceberg-consumer',
-    'auto.offset.reset': 'latest'
+    'auto.offset.reset': 'earliest',
 }
 
 def define_schema_for_items():

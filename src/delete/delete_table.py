@@ -123,8 +123,5 @@ spark.sql("SHOW NAMESPACES IN iceberg").show()
 # 테이블 삭제 (PURGE를 사용하여 물리적 데이터도 함께 삭제)
 spark.sql("DROP TABLE iceberg.fastapi_db.items PURGE")
 
-# 네임스페이스 확인 (선택사항)
-spark.sql("SHOW NAMESPACES IN iceberg").show()
-
 # 종료
 spark.stop()

@@ -7,11 +7,12 @@ import sys
 import os
 
 EXTERNAL_IP = os.getenv("EXTERNAL_IP")
+BOOTSTRAP_SERVER_URL = os.getenv("BOOTSTRAP_SERVER_URL")
 # 환경 설정 (필요에 따라 수정)
 KAFKA_CONNECT_URL = f"http://kafka-connect.{EXTERNAL_IP}.nip.io"  # 환경에 맞게 수정
 CONNECTOR_NAME = "iceberg-sink"
 TOPIC = "postgres-connector.public.items"
-CONSUMER_GROUPS = ["connect-iceberg-sink", "cg-control-iceberg-sink"]
+CONSUMER_GROUPS = ["connect-iceberg-sink", "cg-control-iceberg-sink", "spark-iceberg-consumer"]
 
 def delete_connector():
     """커넥터 삭제"""
@@ -27,39 +28,30 @@ def delete_connector():
             print(response.text)
     except Exception as e:
         print(f"커넥터 삭제 중 오류 발생: {e}")
-
-def reset_offsets():
-    """REST API를 통해 컨슈머 그룹 오프셋 초기화"""
+        
+# 컨슈머 그룹 삭제 함수
+def delete_consumer_group():
     try:
-        # Kafka Connect REST API를 통한 오프셋 초기화
+        # 관리자 클라이언트 설정
+        from confluent_kafka.admin import AdminClient
+        admin_config = {
+            'bootstrap.servers': BOOTSTRAP_SERVER_URL + ":9094"
+        }
+        admin_client = AdminClient(admin_config)
+        
         for group in CONSUMER_GROUPS:
-            print(f"\n{group} 그룹 오프셋 초기화 중...")
+            print(f"\n{group} 그룹 삭제 중...")
+            result = admin_client.delete_consumer_groups([group])
             
-            # 그룹 정보 조회
-            response = requests.get(f"{KAFKA_CONNECT_URL}/admin/consumers/{group}/offsets")
-            if response.status_code == 404:
-                print(f"그룹 '{group}'이 존재하지 않습니다. 계속 진행합니다.")
-                continue
-                
-            # 오프셋 초기화 요청
-            reset_data = {
-                "topics": [{"topic": TOPIC}]
-            }
-            
-            response = requests.delete(
-                f"{KAFKA_CONNECT_URL}/admin/consumers/{group}/offsets",
-                headers={"Content-Type": "application/json"},
-                data=json.dumps(reset_data)
-            )
-            
-            if response.status_code in [200, 204]:
-                print(f"{group} 그룹 오프셋 초기화 성공")
-            else:
-                print(f"{group} 그룹 오프셋 초기화 실패: HTTP {response.status_code}")
-                print(response.text)
-                
+            for group_name, future in result.items():
+                try:
+                    future.result()  # 결과 확인
+                    print(f"{group_name} 그룹 삭제 성공")
+                except Exception as e:
+                    print(f"{group_name} 그룹 삭제 실패: {e}")
+    
     except Exception as e:
-        print(f"오프셋 초기화 중 오류 발생: {e}")
+        print(f"컨슈머 그룹 삭제 중 오류 발생: {e}")
 
 if __name__ == "__main__":
     # 커넥터 삭제
@@ -70,6 +62,6 @@ if __name__ == "__main__":
     time.sleep(3)
     
     # 오프셋 초기화
-    reset_offsets()
+    delete_consumer_group()
     
     print("\n작업 완료")
