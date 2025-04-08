@@ -1,8 +1,13 @@
-
 import sys
 
 from pyspark.sql import SparkSession
 from pyspark.conf import SparkConf
+from pyspark.sql import functions as F
+from pyspark.sql import Window
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 def create_iceberg_spark_session(external_ip: str, s3_access_key: str, s3_secret_key: str, iceberg_warehouse_path: str) -> SparkSession:
     try:
@@ -108,21 +113,83 @@ def create_iceberg_spark_session(external_ip: str, s3_access_key: str, s3_secret
         print(f"Critical error: Failed to create Spark session: {e}")
         sys.exit(1)
 
-import os
-spark = create_iceberg_spark_session(
-    external_ip=os.getenv("EXTERNAL_IP"),
-    s3_access_key=os.getenv("OBC_ACCESS_KEY"),
-    s3_secret_key=os.getenv("OBC_SECRET_KEY"),
-    iceberg_warehouse_path="s3a://iceberg-warehouse/"
-)
+def debug_iceberg_data(spark, iceberg_table):
+    logger.info("Running Iceberg data debug checks...")
+    
+    # Load the Iceberg table
+    iceberg_df = spark.read.format("iceberg").load(iceberg_table)
+    
+    # 전체 레코드 수 확인
+    total_count = iceberg_df.count()
+    logger.info(f"Total records in Iceberg table: {total_count}")
+    
+    # Check column types
+    logger.info("Iceberg table schema:")
+    iceberg_df.printSchema()
+    
+    # Count records with different is_iceberg_deleted values (string type 확인)
+    if "is_iceberg_deleted" in iceberg_df.columns:
+        # 먼저 distinct value 확인
+        logger.info("Distinct values for is_iceberg_deleted:")
+        iceberg_df.select("is_iceberg_deleted").distinct().show(truncate=False)
+        
+        # 각 값별 카운트
+        str_true_count = iceberg_df.filter("is_iceberg_deleted = 'true'").count()
+        str_false_count = iceberg_df.filter("is_iceberg_deleted = 'false'").count()
+        bool_true_count = iceberg_df.filter("is_iceberg_deleted = true").count()
+        bool_false_count = iceberg_df.filter("is_iceberg_deleted = false").count()
+        null_count = iceberg_df.filter("is_iceberg_deleted IS NULL").count()
+        
+        logger.info(f"Records with is_iceberg_deleted = 'true' (string): {str_true_count}")
+        logger.info(f"Records with is_iceberg_deleted = 'false' (string): {str_false_count}")
+        logger.info(f"Records with is_iceberg_deleted = true (boolean): {bool_true_count}")
+        logger.info(f"Records with is_iceberg_deleted = false (boolean): {bool_false_count}")
+        logger.info(f"Records with is_iceberg_deleted = NULL: {null_count}")
+        
+        # 유효한 레코드 수 (삭제되지 않은 레코드)
+        valid_records = iceberg_df.filter(
+            "is_iceberg_deleted = 'false' OR is_iceberg_deleted = false OR is_iceberg_deleted IS NULL"
+        ).count()
+        logger.info(f"Valid records (not deleted): {valid_records}")
+    
+    # Check for duplicate IDs
+    window_spec = Window.partitionBy("id")
+    dupes_df = iceberg_df.withColumn("count", F.count("id").over(window_spec)) \
+                         .filter("count > 1")
+    
+    dupe_count = dupes_df.select("id").distinct().count()
+    logger.info(f"Number of records with duplicate IDs: {dupes_df.count()}")
+    logger.info(f"Number of unique IDs with duplicates: {dupe_count}")
+    
+    if dupe_count > 0:
+        logger.info("Sample of duplicate IDs:")
+        dupes_df.select("id", "count", "is_iceberg_deleted").distinct().show(10)
+        
+        # 첫 번째 중복 ID에 대한 모든 레코드 확인
+        first_dupe_id = dupes_df.select("id").first().id
+        logger.info(f"Details of all records for duplicate ID {first_dupe_id}:")
+        iceberg_df.filter(f"id = {first_dupe_id}").show(truncate=False)
+    
+    # 스냅샷 히스토리 확인
+    try:
+        logger.info("Iceberg table history:")
+        history_df = spark.read.format("iceberg").load(f"{iceberg_table}.history")
+        history_df.show(truncate=False)
+    except Exception as e:
+        logger.info(f"Could not read history: {e}")
 
 
-# 네임스페이스 확인 (선택사항)
-spark.sql("SHOW NAMESPACES IN iceberg").show()
+    
+if __name__ == "__main__":
+    import os
+    spark = create_iceberg_spark_session(
+        external_ip=os.getenv("EXTERNAL_IP"),
+        s3_access_key=os.getenv("OBC_ACCESS_KEY"),
+        s3_secret_key=os.getenv("OBC_SECRET_KEY"),
+        iceberg_warehouse_path="s3a://iceberg-warehouse/"
+    )
+    
+    # 네임스페이스 확인 (선택사항)
+    table_name = "iceberg.fastapi_db.items"
 
-# 테이블 삭제 (PURGE를 사용하여 물리적 데이터도 함께 삭제)
-for table in ["items_spark", "items"]:
-    spark.sql(f"DROP TABLE iceberg.fastapi_db.{table} PURGE")
-
-# 종료
-spark.stop()
+    debug_iceberg_data(spark, table_name)

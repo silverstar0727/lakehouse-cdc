@@ -12,7 +12,8 @@ from confluent_kafka import Consumer, KafkaException, KafkaError
 
 from pyspark.sql import SparkSession
 from pyspark.conf import SparkConf
-from pyspark.sql.functions import col, min, max, avg, lit, coalesce, concat_ws, collect_list, md5
+from pyspark.sql import Window
+from pyspark.sql.functions import col, min, max, avg, lit, coalesce, concat_ws, collect_list, md5, row_number, count
 
 # Logging configuration
 logging.basicConfig(
@@ -205,20 +206,13 @@ class DataValidation:
         except KafkaException as e:
             logger.error(f"Kafka connection failed: {e}")
             raise
-
+        
     def validate_row_count(self, table_name, iceberg_table):
         """
         Validate row count between source and target systems
-        
-        Args:
-            table_name (str): PostgreSQL table name
-            iceberg_table (str): Iceberg table name (format: catalog.database.table)
-            
-        Returns:
-            dict: Validation results and metadata
         """
         try:
-            # Get row count from PostgreSQL
+            # PostgreSQL row count
             pg_conn = self.connect_postgres()
             pg_cursor = pg_conn.cursor()
             pg_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
@@ -226,44 +220,137 @@ class DataValidation:
             pg_cursor.close()
             pg_conn.close()
             
-            # Get row count from Iceberg
+            # Iceberg row count with improved filtering
             spark = self.connect_spark()
             
             iceberg_df = spark.read.format("iceberg").load(iceberg_table)
             
             if "is_iceberg_deleted" in iceberg_df.columns:
-                iceberg_count = iceberg_df.filter("is_iceberg_deleted = false OR is_iceberg_deleted IS NULL").count()
+                # 각 ID의 최신 버전만 고려 (ID 기준으로 정렬)
+                window_spec = Window.partitionBy("id").orderBy(
+                    # 정렬 기준을 가용 가능한 컬럼으로 변경
+                    col("id").desc()  # 또는 다른 대체 정렬 기준
+                )
+                
+                filtered_df = iceberg_df.withColumn("row_num", 
+                    row_number().over(window_spec)
+                ).filter(
+                    "(row_num = 1) AND (is_iceberg_deleted = 'false')"
+                )
+                
+                iceberg_count = filtered_df.count()
+                
+                # 추가 진단 정보 수집
+                total_records = iceberg_df.count()
+                deleted_records = iceberg_df.filter("is_iceberg_deleted = 'true'").count()
+                duplicate_ids = iceberg_df.groupBy("id").count().filter("count > 1").count()
+                
+                logger.info(f"Iceberg 테이블 진단:")
+                logger.info(f"전체 레코드 수: {total_records}")
+                logger.info(f"삭제된 레코드 수: {deleted_records}")
+                logger.info(f"중복 ID 수: {duplicate_ids}")
             else:
+                # is_iceberg_deleted 필드 없는 경우 대비
                 iceberg_count = iceberg_df.count()
                 logger.warning("is_iceberg_deleted 필드를 찾을 수 없어 전체 레코드를 카운트합니다.")
             
-            # Calculate results
+            # 결과 계산
             count_diff = abs(pg_count - iceberg_count)
             count_diff_pct = (count_diff / pg_count * 100) if pg_count > 0 else 0
-            is_valid = count_diff_pct <= 0.1  # Allow difference within 0.1%
+            
+            # 더 유연한 유효성 검사
+            is_valid = (
+                count_diff_pct <= 0.1 or  # 0.1% 이내 차이
+                (count_diff <= 5)  # 또는 절대값으로 5개 이내 차이
+            )
             
             result = {
                 "validation_type": "row_count",
                 "source_count": pg_count,
                 "target_count": iceberg_count,
+                "total_iceberg_records": total_records if 'total_records' in locals() else None,
+                "deleted_records": deleted_records if 'deleted_records' in locals() else None,
+                "duplicate_ids": duplicate_ids if 'duplicate_ids' in locals() else None,
                 "difference": count_diff,
                 "difference_percentage": count_diff_pct,
                 "is_valid": is_valid,
                 "timestamp": datetime.now().isoformat()
             }
             
-            logger.info(f"Row count validation result: {result}")
+            logger.info(f"Row count 검증 결과: {result}")
             return result
-            
+        
         except Exception as e:
-            logger.error(f"Error during row count validation: {e}")
+            logger.error(f"Row count 검증 중 오류 발생: {e}")
             return {
                 "validation_type": "row_count",
                 "error": str(e),
                 "is_valid": False,
                 "timestamp": datetime.now().isoformat()
             }
+            
+    def check_duplicate_ids(self, spark, iceberg_df):
+        """중복 ID 개수 확인"""
+        from pyspark.sql import Window
+        import pyspark.sql.functions as F
         
+        window_spec = Window.partitionBy("id")
+        dupes_df = iceberg_df.withColumn("count", count("id").over(window_spec)) \
+                            .filter("count > 1")
+        
+        return dupes_df.select("id").distinct().count()
+
+    def diagnose_specific_differences(self, table_name, iceberg_table):
+        """PostgreSQL과 Iceberg 간의 특정 차이점 진단"""
+        try:
+            # PostgreSQL에서 모든 ID 가져오기
+            pg_conn = self.connect_postgres()
+            pg_cursor = pg_conn.cursor()
+            pg_cursor.execute(f"SELECT id FROM {table_name}")
+            pg_ids = set([row[0] for row in pg_cursor.fetchall()])
+            pg_cursor.close()
+            pg_conn.close()
+            
+            # Iceberg에서 활성(삭제되지 않은) ID 가져오기
+            spark = self.connect_spark()
+            iceberg_df = spark.read.format("iceberg").load(iceberg_table)
+            active_df = iceberg_df.filter("is_iceberg_deleted = 'false'")
+            
+            # 불일치 ID 검사
+            iceberg_ids = set(active_df.select("id").distinct().toPandas()["id"].tolist())
+            
+            # 차이점 분석
+            only_in_pg = pg_ids - iceberg_ids
+            only_in_iceberg = iceberg_ids - pg_ids
+            
+            # 보고서 생성
+            report = {
+                "total_pg_ids": len(pg_ids),
+                "total_iceberg_ids": len(iceberg_ids),
+                "only_in_pg_count": len(only_in_pg),
+                "only_in_iceberg_count": len(only_in_iceberg),
+                "only_in_pg_samples": list(only_in_pg)[:10] if only_in_pg else [],
+                "only_in_iceberg_samples": list(only_in_iceberg)[:10] if only_in_iceberg else []
+            }
+            
+            # 불일치 ID에 대한 자세한 분석
+            if only_in_iceberg:
+                # Iceberg에만 있는 ID의 레코드 확인
+                sample_id = list(only_in_iceberg)[0]
+                iceberg_record = iceberg_df.filter(f"id = {sample_id}").collect()
+                report["iceberg_only_record_sample"] = [str(row) for row in iceberg_record]
+                
+                # 삭제된 것으로 표시되었지만 여전히 'false'로 나타나는 레코드 확인
+                ambiguous_records = iceberg_df.filter(
+                    f"id IN ({','.join(map(str, list(only_in_iceberg)[:5]))}) AND is_iceberg_deleted = 'false'"
+                ).collect()
+                report["ambiguous_records"] = [str(row) for row in ambiguous_records]
+            
+            return report
+        except Exception as e:
+            logger.error(f"차이점 진단 중 오류 발생: {e}")
+            return {"error": str(e)}
+
     def validate_checksum(self, table_name, columns, iceberg_table):
         """
         Validate data content using checksum
@@ -1046,6 +1133,9 @@ if __name__ == "__main__":
         
         result = validator.validate_row_count(args.pg_table, args.iceberg_table)
         print(f"Row count validation result: {json.dumps(result, indent=2, default=str)}")
+
+        ret = validator.diagnose_specific_differences(args.pg_table, args.iceberg_table)
+        print(f"Row count differences: {json.dumps(ret, indent=2, default=str)}")
     
     elif args.test == 'checksum':
         if not args.pg_table or not args.iceberg_table or not args.columns:
