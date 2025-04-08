@@ -1,6 +1,4 @@
 #!/bin/bash
-
-
 export BOOTSTRAP_SERVER_URL=$(kubectl get service -n strimzi-kafka kraft-cluster-kafka-external-bootstrap -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 export OBC_ACCESS_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 --decode)
@@ -26,7 +24,7 @@ KAFKA_GROUP="validation-group"
 
 # Iceberg 설정
 ICEBERG_WAREHOUSE="s3a://iceberg-warehouse/"
-ICEBERG_TABLE="fastapi_db.items"
+ICEBERG_TABLE="iceberg.fastapi_db.items"
 S3_ACCESS_KEY="$OBC_ACCESS_KEY"
 S3_SECRET_KEY="$OBC_SECRET_KEY"
 EXTERNAL_IP="$EXTERNAL_IP"

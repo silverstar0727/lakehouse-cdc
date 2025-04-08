@@ -73,7 +73,7 @@ sed "s/\${EXTERNAL_IP}/$EXTERNAL_IP/g" nginx-ingress.yaml | kubectl apply -f -
 Updated to include sink connector setup:
 
 ```bash
-cd src/kafka
+cd ../kafka
 
 # Add and install Strimzi Kafka Operator
 helm repo add strimzi https://strimzi.io/charts
