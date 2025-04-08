@@ -40,13 +40,13 @@ COLUMNS="id,name,description,price,on_offer"
 SAMPLE_SIZE="100"
 
 # 테스트 유형 선택 (주석 해제하여 사용)
-# TEST_TYPE="row_count"
+TEST_TYPE="row_count"
 # TEST_TYPE="checksum"
 # TEST_TYPE="sample_data"
 # TEST_TYPE="replication_lag"
 # TEST_TYPE="combined_lag"
 # TEST_TYPE="connector_status"
-TEST_TYPE="iceberg_health"
+# TEST_TYPE="iceberg_health"
 # TEST_TYPE="validation_suite"
 
 # 데이터 검증 스크립트 실행

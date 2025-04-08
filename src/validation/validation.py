@@ -167,6 +167,10 @@ class DataValidation:
                 # Test Iceberg catalog connection
                 spark.sql("SHOW NAMESPACES IN iceberg").show()
                 print("Iceberg catalog connection successful.")
+
+                # # Test Iceberg table access
+                # spark.sql(f"SELECT * FROM {self.iceberg_config["table"]} LIMIT 1").show()
+                # print("Iceberg table access successful.")
             except Exception as session_e:
                 print(f"Error during Spark session test: {session_e}")
                 
