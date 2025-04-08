@@ -271,6 +271,55 @@ curl -X DELETE $API_URL/item/1
   ```
 - Configuration details in [src/processor/README.md](src/processor/README.md)
 
+### Data Pipeline Validation
+
+- Tools for validating the CDC pipeline from PostgreSQL to Apache Iceberg
+- Test data integrity, consistency, and system health throughout the pipeline
+- Comprehensive validation workflow with multiple test types
+- Configuration details in [src/validation/README.md](src/validation/README.md)
+
+#### Validation Features
+
+- **Row Count Validation**: Compares row counts between source and target systems
+- **Checksum Validation**: Verifies data integrity via checksums
+- **Sample Data Validation**: Tests data consistency with record sampling
+- **Replication Lag Measurement**: Tracks CDC replication delays
+- **System Health Checks**: Monitors connector status and Iceberg table health
+- **Comprehensive Validation Suite**: Combined tests for full pipeline validation
+
+#### Running Validation Tests
+
+```bash
+cd src/validation
+
+# Edit run.sh to select test type (uncomment desired test)
+# TEST_TYPE="row_count"
+# TEST_TYPE="checksum" 
+# etc.
+
+./run.sh
+
+# Or run manually with configuration parameters
+python3 validation.py --test row_count \
+  --pg-host <HOST> \
+  --pg-port <PORT> \
+  --pg-db <DATABASE> \
+  --pg-user <USERNAME> \
+  --pg-password <PASSWORD> \
+  --pg-table <TABLE> \
+  --kafka-servers <BOOTSTRAP_SERVERS> \
+  --iceberg-warehouse <WAREHOUSE_PATH> \
+  --iceberg-table <TABLE_NAME> \
+  --s3-access-key <KEY> \
+  --s3-secret-key <SECRET>
+```
+
+#### Prerequisites for Validation
+
+- Python 3.6+
+- Required Python packages: psycopg2, confluent_kafka, pyspark, requests
+- Access to PostgreSQL, Kafka, and Iceberg environments
+
 ### FastAPI Service
 
 - Sample application with PostgreSQL database

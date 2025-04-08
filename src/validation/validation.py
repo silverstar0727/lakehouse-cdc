@@ -1,17 +1,20 @@
-import psycopg2
-from datetime import datetime, timedelta
+
 import json
 import requests
-import statistics
-import sys
-from confluent_kafka import Consumer, KafkaException, KafkaError
-from pyspark.sql import SparkSession
-from pyspark.conf import SparkConf
-from pyspark.sql.functions import col, count, min, max, avg, stddev, lit, when, isnan, isnull
 import logging
 import os
+import sys
+from datetime import datetime, timedelta
 
-# 로깅 설정
+import psycopg2
+
+from confluent_kafka import Consumer, KafkaException, KafkaError
+
+from pyspark.sql import SparkSession
+from pyspark.conf import SparkConf
+from pyspark.sql.functions import col, min, max, avg, lit, coalesce, concat_ws, collect_list, md5
+
+# Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -25,18 +28,18 @@ logger = logging.getLogger("data_validation")
 class DataValidation:
     def __init__(self, pg_config, kafka_config, iceberg_config):
         """
-        데이터 파이프라인 무결성 검증을 위한 클래스 초기화
+        Initialize class for data pipeline integrity validation
         
         Args:
-            pg_config (dict): PostgreSQL 연결 정보
-            kafka_config (dict): Kafka 연결 정보
-            iceberg_config (dict): Iceberg/Spark 연결 정보
+            pg_config (dict): PostgreSQL connection information
+            kafka_config (dict): Kafka connection information
+            iceberg_config (dict): Iceberg/Spark connection information
         """
         self.pg_config = pg_config
         self.kafka_config = kafka_config
         self.iceberg_config = iceberg_config
         
-        # 결과 저장소
+        # Results repository
         self.validation_results = {}
         self.validation_metadata = {
             "start_time": None,
@@ -46,10 +49,10 @@ class DataValidation:
     
     def connect_postgres(self):
         """
-        PostgreSQL 데이터베이스에 연결
+        Connect to PostgreSQL database
         
         Returns:
-            connection: PostgreSQL 연결 객체
+            connection: PostgreSQL connection object
         """
         try:
             conn = psycopg2.connect(
@@ -61,7 +64,7 @@ class DataValidation:
             )
             return conn
         except Exception as e:
-            logger.error(f"PostgreSQL 연결 실패: {e}")
+            logger.error(f"PostgreSQL connection failed: {e}")
             raise
     
     def connect_spark(self) -> SparkSession:
@@ -100,13 +103,13 @@ class DataValidation:
             conf.set("spark.sql.catalog.iceberg.s3.secret-access-key", s3_secret_key)
             conf.set("spark.sql.catalog.iceberg.s3.path-style-access", "true")
             
-            # 중요: AWS SDK v2에 대한 명시적 리전 설정
+            # Important: Explicit region setting for AWS SDK v2
             conf.set("spark.sql.catalog.iceberg.s3.region", "us-east-1")
             
-            # Hadoop 설정에도 리전 추가
+            # Add region to Hadoop settings
             conf.set("spark.hadoop.fs.s3a.region", "us-east-1")
             
-            # 시스템 프로퍼티로 리전 설정 (JVM 레벨)
+            # Set region as a system property (JVM level)
             os.environ["AWS_REGION"] = "us-east-1"
             
             # General Spark SQL settings
@@ -135,7 +138,7 @@ class DataValidation:
             # AWS SDK v2 specific properties for S3 client
             conf.set("spark.sql.catalog.iceberg.s3.signing-enabled", "false")  # Disable signing for Ceph
             
-            # SDK v2 설정: URL 접속 클라이언트 사용
+            # SDK v2 setting: Use URL connection client
             conf.set("spark.sql.catalog.iceberg.s3.client.factory", "software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient$Builder")
             
             # Merge conflict strategy
@@ -174,13 +177,13 @@ class DataValidation:
             
     def connect_kafka(self):
         """
-        Confluent Kafka Consumer 객체 생성
+        Create Confluent Kafka Consumer object
         
         Returns:
-            consumer: 구성된 Confluent Kafka Consumer 객체
+            consumer: Configured Confluent Kafka Consumer object
         """
         try:
-            # Confluent Kafka Consumer 설정
+            # Confluent Kafka Consumer settings
             config = {
                 'bootstrap.servers': self.kafka_config["bootstrap_servers"],
                 'group.id': self.kafka_config.get("group_id", "data_validation_group"),
@@ -188,7 +191,7 @@ class DataValidation:
                 'enable.auto.commit': False
             }
             
-            # 추가 설정이 있으면 병합
+            # Merge additional settings if any
             for key, value in self.kafka_config.items():
                 if key not in ['bootstrap_servers', 'group_id']:
                     config[key] = value
@@ -196,22 +199,22 @@ class DataValidation:
             consumer = Consumer(config)
             return consumer
         except KafkaException as e:
-            logger.error(f"Kafka 연결 실패: {e}")
+            logger.error(f"Kafka connection failed: {e}")
             raise
 
     def validate_row_count(self, table_name, iceberg_table):
         """
-        소스 시스템과 타겟 시스템 간 행 수 비교 검증
+        Validate row count between source and target systems
         
         Args:
-            table_name (str): PostgreSQL 테이블 이름
-            iceberg_table (str): Iceberg 테이블 이름(catalog.database.table 형식)
+            table_name (str): PostgreSQL table name
+            iceberg_table (str): Iceberg table name (format: catalog.database.table)
             
         Returns:
-            dict: 검증 결과 및 메타데이터
+            dict: Validation results and metadata
         """
         try:
-            # PostgreSQL 행 수 조회
+            # Get row count from PostgreSQL
             pg_conn = self.connect_postgres()
             pg_cursor = pg_conn.cursor()
             pg_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
@@ -219,14 +222,14 @@ class DataValidation:
             pg_cursor.close()
             pg_conn.close()
             
-            # Iceberg 행 수 조회
+            # Get row count from Iceberg
             spark = self.connect_spark()
             iceberg_count = spark.read.format("iceberg").load(iceberg_table).count()
             
-            # 결과 계산
+            # Calculate results
             count_diff = abs(pg_count - iceberg_count)
             count_diff_pct = (count_diff / pg_count * 100) if pg_count > 0 else 0
-            is_valid = count_diff_pct <= 0.1  # 0.1% 이내 차이는 허용
+            is_valid = count_diff_pct <= 0.1  # Allow difference within 0.1%
             
             result = {
                 "validation_type": "row_count",
@@ -238,11 +241,11 @@ class DataValidation:
                 "timestamp": datetime.now().isoformat()
             }
             
-            logger.info(f"행 수 검증 결과: {result}")
+            logger.info(f"Row count validation result: {result}")
             return result
         
         except Exception as e:
-            logger.error(f"행 수 검증 중 오류 발생: {e}")
+            logger.error(f"Error during row count validation: {e}")
             return {
                 "validation_type": "row_count",
                 "error": str(e),
@@ -250,47 +253,116 @@ class DataValidation:
                 "timestamp": datetime.now().isoformat()
             }
 
+    # def validate_checksum(self, table_name, columns, iceberg_table):
+    #     """
+    #     Validate data content using checksum
+        
+    #     Args:
+    #         table_name (str): PostgreSQL table name
+    #         columns (list): List of columns to use for checksum calculation
+    #         iceberg_table (str): Iceberg table name
+            
+    #     Returns:
+    #         dict: Validation results and metadata
+    #     """
+    #     try:
+    #         # Calculate checksum from PostgreSQL
+    #         pg_conn = self.connect_postgres()
+    #         pg_cursor = pg_conn.cursor()
+            
+    #         columns_concat = "||'#'||".join([f"COALESCE(CAST({col} AS VARCHAR), '')" for col in columns])
+    #         pg_cursor.execute(f"SELECT MD5(STRING_AGG({columns_concat}, ',')) FROM {table_name}")
+    #         pg_checksum = pg_cursor.fetchone()[0]
+    #         pg_cursor.close()
+    #         pg_conn.close()
+            
+    #         # Calculate checksum from Iceberg (using Spark SQL)
+    #         spark = self.connect_spark()
+            
+    #         # Create expression to convert columns to string and concatenate
+    #         concat_expr = "concat_ws('#', " + ", ".join([f"coalesce(cast({col} as string), '')" for col in columns]) + ")"
+            
+    #         # Create Spark DataFrame and calculate checksum
+    #         df = spark.read.format("iceberg").load(iceberg_table)
+            
+    #         from pyspark.sql.functions import expr, concat_ws, hash, collect_list, md5
+            
+    #         # Combine all rows into a single string and calculate MD5 hash
+    #         iceberg_checksum = df.selectExpr(concat_expr).orderBy(concat_expr).select(
+    #             md5(concat_ws(",", collect_list(concat_expr)))).collect()[0][0]
+            
+    #         # Compare results
+    #         is_valid = pg_checksum == iceberg_checksum
+            
+    #         result = {
+    #             "validation_type": "checksum",
+    #             "source_checksum": pg_checksum,
+    #             "target_checksum": iceberg_checksum,
+    #             "is_valid": is_valid,
+    #             "columns_validated": columns,
+    #             "timestamp": datetime.now().isoformat()
+    #         }
+            
+    #         logger.info(f"Checksum validation result: {result}")
+    #         return result
+            
+    #     except Exception as e:
+    #         logger.error(f"Error during checksum validation: {e}")
+    #         return {
+    #             "validation_type": "checksum",
+    #             "error": str(e),
+    #             "is_valid": False,
+    #             "timestamp": datetime.now().isoformat()
+    #         }
+
     def validate_checksum(self, table_name, columns, iceberg_table):
         """
-        체크섬을 이용한 데이터 내용 검증
+        Validate data content using checksum
         
         Args:
-            table_name (str): PostgreSQL 테이블 이름
-            columns (list): 체크섬 계산에 사용할 컬럼 목록
-            iceberg_table (str): Iceberg 테이블 이름
+            table_name (str): PostgreSQL table name
+            columns (list): List of columns to use for checksum calculation
+            iceberg_table (str): Iceberg table name
             
         Returns:
-            dict: 검증 결과 및 메타데이터
+            dict: Validation results and metadata
         """
         try:
-            # PostgreSQL 체크섬 계산
+            # Calculate checksum from PostgreSQL
             pg_conn = self.connect_postgres()
             pg_cursor = pg_conn.cursor()
             
+            # Create PostgreSQL concatenation expression with # as delimiter
             columns_concat = "||'#'||".join([f"COALESCE(CAST({col} AS VARCHAR), '')" for col in columns])
             pg_cursor.execute(f"SELECT MD5(STRING_AGG({columns_concat}, ',')) FROM {table_name}")
             pg_checksum = pg_cursor.fetchone()[0]
             pg_cursor.close()
             pg_conn.close()
             
-            # Iceberg 체크섬 계산 (Spark SQL 사용)
+            # Calculate checksum from Iceberg using Spark DataFrame operations
             spark = self.connect_spark()
             
-            # 컬럼을 문자열로 변환하고 결합하는 표현식 생성
-            concat_expr = "concat_ws('#', " + ", ".join([f"coalesce(cast({col} as string), '')" for col in columns]) + ")"
-            
-            # Spark DataFrame을 생성하고 체크섬 계산
+            # Load the Iceberg table data
             df = spark.read.format("iceberg").load(iceberg_table)
             
-            from pyspark.sql.functions import expr, concat_ws, hash, collect_list, md5
+            # Create column expressions for each column in the list
+            col_exprs = [coalesce(col(c).cast("string"), lit("")) for c in columns]
             
-            # 모든 행을 하나의 문자열로 결합하여 MD5 해시 계산
-            iceberg_checksum = df.selectExpr(concat_expr).orderBy(concat_expr).select(
-                md5(concat_ws(",", collect_list(concat_expr)))).collect()[0][0]
+            # Create a combined string for each row using concat_ws with # delimiter
+            df_with_concat = df.withColumn("combined_cols", concat_ws("#", *col_exprs))
             
-            # 결과 비교
+            # Order the data consistently to ensure matching with PostgreSQL
+            df_ordered = df_with_concat.orderBy("combined_cols")
+            
+            # Collect all combined strings and join with comma, then calculate MD5
+            iceberg_checksum = df_ordered.agg(
+                md5(concat_ws(",", collect_list("combined_cols")))
+            ).collect()[0][0]
+            
+            # Compare checksums to determine validity
             is_valid = pg_checksum == iceberg_checksum
             
+            # Prepare result object
             result = {
                 "validation_type": "checksum",
                 "source_checksum": pg_checksum,
@@ -300,36 +372,36 @@ class DataValidation:
                 "timestamp": datetime.now().isoformat()
             }
             
-            logger.info(f"체크섬 검증 결과: {result}")
+            logger.info(f"Checksum validation result: {result}")
             return result
             
         except Exception as e:
-            logger.error(f"체크섬 검증 중 오류 발생: {e}")
+            logger.error(f"Error during checksum validation: {e}")
             return {
                 "validation_type": "checksum",
                 "error": str(e),
                 "is_valid": False,
                 "timestamp": datetime.now().isoformat()
             }
-
+    
     def sample_data_validation(self, table_name, iceberg_table, sample_size=1000):
         """
-        데이터 샘플링을 통한 소스와 타겟 시스템의 데이터 일치 검증
+        Validate data consistency between source and target systems using data sampling
         
         Args:
-            table_name (str): PostgreSQL 테이블 이름
-            iceberg_table (str): Iceberg 테이블 이름
-            sample_size (int): 샘플링할 레코드 수
+            table_name (str): PostgreSQL table name
+            iceberg_table (str): Iceberg table name
+            sample_size (int): Number of records to sample
             
         Returns:
-            dict: 샘플링 검증 결과
+            dict: Sampling validation results
         """
         try:
-            # PostgreSQL에서 랜덤 샘플 추출
+            # Extract random sample from PostgreSQL
             pg_conn = self.connect_postgres()
             pg_cursor = pg_conn.cursor()
             
-            # 키 컬럼 식별 (주요 키 또는 인덱스)
+            # Identify key columns (primary key or index)
             pg_cursor.execute(f"""
                 SELECT a.attname
                 FROM pg_index i
@@ -339,22 +411,22 @@ class DataValidation:
             key_columns = [row[0] for row in pg_cursor.fetchall()]
             
             if not key_columns:
-                logger.warning(f"테이블 {table_name}의 기본 키를 찾을 수 없습니다. 첫 번째 컬럼을 사용합니다.")
+                logger.warning(f"Primary key not found for table {table_name}. Using first column.")
                 pg_cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position LIMIT 1")
                 key_columns = [pg_cursor.fetchone()[0]]
             
-            # 모든 컬럼 가져오기
+            # Get all columns
             pg_cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'")
             all_columns = [row[0] for row in pg_cursor.fetchall()]
             
-            # 랜덤 샘플 쿼리 실행
+            # Execute random sample query
             columns_str = ", ".join(all_columns)
             key_columns_str = ", ".join(key_columns)
             
             pg_cursor.execute(f"SELECT {columns_str} FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}")
             pg_samples = pg_cursor.fetchall()
             
-            # 키 값 추출
+            # Extract key values
             key_values = []
             key_indices = [all_columns.index(col) for col in key_columns]
             
@@ -365,7 +437,7 @@ class DataValidation:
             pg_cursor.close()
             pg_conn.close()
             
-            # Iceberg에서 동일한 키를 가진 레코드 검색
+            # Search for records with the same keys in Iceberg
             spark = self.connect_spark()
             iceberg_df = spark.read.format("iceberg").load(iceberg_table)
             
@@ -373,7 +445,7 @@ class DataValidation:
             mismatch_details = []
             
             for key_dict in key_values:
-                # 키 조건 생성
+                # Create key conditions
                 filter_conditions = []
                 for col, val in key_dict.items():
                     if val is None:
@@ -383,7 +455,7 @@ class DataValidation:
                 
                 filter_expr = " AND ".join(filter_conditions)
                 
-                # 일치하는 레코드 검색
+                # Search for matching records
                 matching_rows = iceberg_df.filter(filter_expr).collect()
                 
                 if matching_rows and len(matching_rows) == 1:
@@ -402,19 +474,19 @@ class DataValidation:
                 "sample_size": len(pg_samples),
                 "matched_records": match_count,
                 "match_rate": match_rate,
-                "is_valid": match_rate >= 0.99,  # 99% 이상 일치 시 유효
+                "is_valid": match_rate >= 0.99,  # Valid if match rate is 99% or higher
                 "mismatch_count": len(mismatch_details),
                 "timestamp": datetime.now().isoformat()
             }
             
             if len(mismatch_details) > 0:
-                result["mismatch_examples"] = mismatch_details[:5]  # 처음 5개만 예시로 포함
+                result["mismatch_examples"] = mismatch_details[:5]  # Include first 5 examples
             
-            logger.info(f"데이터 샘플링 검증 결과: {result}")
+            logger.info(f"Data sampling validation result: {result}")
             return result
             
         except Exception as e:
-            logger.error(f"데이터 샘플링 검증 중 오류 발생: {e}")
+            logger.error(f"Error during data sampling validation: {e}")
             return {
                 "validation_type": "data_sampling",
                 "error": str(e),
@@ -424,23 +496,23 @@ class DataValidation:
         
     def measure_replication_lag(self, debezium_url, connector_name):
         """
-        복제 지연(Replication Lag) 측정 - Debezium 커넥터의 복제 지연 시간 확인
+        Measure replication lag - Check replication lag time of Debezium connector
         
         Args:
             debezium_url (str): Debezium REST API URL
-            connector_name (str): Debezium 커넥터 이름
+            connector_name (str): Debezium connector name
             
         Returns:
-            dict: 복제 지연 측정 결과
+            dict: Replication lag measurement results
         """
         try:
-            # Debezium 커넥터 상태 확인 API 호출
+            # Call Debezium connector status check API
             response = requests.get(f"{debezium_url}/connectors/{connector_name}/status")
             response.raise_for_status()
             
             connector_status = response.json()
             
-            # 커넥터가 실행 중인지 확인
+            # Check if connector is running
             if connector_status.get("connector", {}).get("state") != "RUNNING":
                 return {
                     "validation_type": "replication_lag",
@@ -449,13 +521,13 @@ class DataValidation:
                     "timestamp": datetime.now().isoformat()
                 }
             
-            # Debezium 커넥터의 복제 지연 메트릭 확인
-            response = requests.get(f"{debezium_url}/connectors/{connector_name}/metrics")
+            # Check replication lag metrics of Debezium connector
+            response = requests.get(f"{debezium_url}/connectors/{connector_name}")
             response.raise_for_status()
             
             metrics = response.json()
             
-            # 복제 지연 관련 메트릭 추출
+            # Extract replication lag related metrics
             lag_metrics = {}
             
             if "tasks" in metrics:
@@ -466,7 +538,7 @@ class DataValidation:
                         lag_metrics["lag_millis"] = task["metrics"]["lag-in-millis"]
             
             is_acceptable_lag = True
-            if "lag_millis" in lag_metrics and lag_metrics["lag_millis"] > 60000:  # 1분 이상 지연은 경고
+            if "lag_millis" in lag_metrics and lag_metrics["lag_millis"] > 60000:  # Warning for lag over 1 minute
                 is_acceptable_lag = False
             
             result = {
@@ -477,11 +549,11 @@ class DataValidation:
                 "timestamp": datetime.now().isoformat()
             }
             
-            logger.info(f"복제 지연 측정 결과: {result}")
+            logger.info(f"Replication lag measurement result: {result}")
             return result
             
         except Exception as e:
-            logger.error(f"복제 지연 측정 중 오류 발생: {e}")
+            logger.error(f"Error during replication lag measurement: {e}")
             return {
                 "validation_type": "replication_lag",
                 "error": str(e),
@@ -491,21 +563,21 @@ class DataValidation:
     
     def measure_combined_lag(self, table_name, iceberg_table, event_time_column):
         """
-        전체 파이프라인 지연(Combined Lag) 측정 - 소스 생성 시점부터 타겟 적재까지의 총 지연 시간
+        Measure combined lag - Total lag time from source creation to target loading
         
         Args:
-            table_name (str): PostgreSQL 테이블 이름
-            iceberg_table (str): Iceberg 테이블 이름
-            event_time_column (str): 이벤트 생성 시간을 저장하는 컬럼 이름
+            table_name (str): PostgreSQL table name
+            iceberg_table (str): Iceberg table name
+            event_time_column (str): Column name storing event creation time
             
         Returns:
-            dict: 전체 지연 측정 결과
+            dict: Combined lag measurement results
         """
         try:
-            # 현재 시간 기준 최근 30분 내의 데이터만 조회
+            # Query data within the last 30 minutes from current time
             thirty_mins_ago = datetime.now() - timedelta(minutes=30)
             
-            # PostgreSQL에서 최근 데이터의 이벤트 시간과 시스템 시간 조회
+            # Query event time and system time of recent data from PostgreSQL
             pg_conn = self.connect_postgres()
             pg_cursor = pg_conn.cursor()
             
@@ -526,12 +598,12 @@ class DataValidation:
             pg_cursor.close()
             pg_conn.close()
             
-            # Iceberg에서 동일 데이터 조회
+            # Query the same data from Iceberg
             spark = self.connect_spark()
             
             from pyspark.sql.functions import current_timestamp, col
             
-            # Spark SQL을 사용하여 최근 데이터 조회
+            # Query recent data using Spark SQL
             iceberg_df = spark.read.format("iceberg").load(iceberg_table)
             iceberg_times = iceberg_df.filter(col(event_time_column) > thirty_mins_ago.isoformat()) \
                                      .select(event_time_column, current_timestamp().alias("system_time")) \
@@ -539,24 +611,24 @@ class DataValidation:
                                      .limit(100) \
                                      .collect()
             
-            # 소스 생성 시간과 타겟 적재 시간 간의 지연 계산
+            # Calculate lag between source creation time and target loading time
             if pg_times and iceberg_times:
-                # 평균 지연 시간 계산 (초 단위)
+                # Calculate average lag time (in seconds)
                 pg_event_times = [row[0] for row in pg_times]
                 iceberg_event_times = [row[0] for row in iceberg_times]
                 
-                # 소스와 타겟 모두에 있는 이벤트 시간 찾기
+                # Find event times present in both source and target
                 common_times = set(pg_event_times).intersection(set(iceberg_event_times))
                 
                 if common_times:
-                    # 각 이벤트의 시스템 시간 매핑
+                    # Map system time for each event
                     pg_time_map = {row[0]: row[1] for row in pg_times if row[0] in common_times}
                     iceberg_time_map = {row[0]: row[1] for row in iceberg_times if row[0] in common_times}
                     
-                    # 지연 시간 계산
+                    # Calculate lag time
                     lag_times = []
                     for event_time in common_times:
-                        # 이벤트가 타겟에 기록된 시간 - 소스에 기록된 시간
+                        # Time recorded in target - Time recorded in source
                         lag_seconds = (iceberg_time_map[event_time] - pg_time_map[event_time]).total_seconds()
                         lag_times.append(lag_seconds)
                     
@@ -564,7 +636,7 @@ class DataValidation:
                     min_lag = min(lag_times)
                     max_lag = max(lag_times)
                     
-                    # 5분(300초) 이내 지연은 허용
+                    # Allow lag within 5 minutes (300 seconds)
                     is_acceptable = avg_lag <= 300
                     
                     result = {
@@ -591,11 +663,11 @@ class DataValidation:
                     "timestamp": datetime.now().isoformat()
                 }
             
-            logger.info(f"전체 지연 측정 결과: {result}")
+            logger.info(f"Combined lag measurement result: {result}")
             return result
             
         except Exception as e:
-            logger.error(f"전체 지연 측정 중 오류 발생: {e}")
+            logger.error(f"Error during combined lag measurement: {e}")
             return {
                 "validation_type": "combined_lag",
                 "error": str(e),
@@ -605,17 +677,17 @@ class DataValidation:
         
     def check_connector_status(self, debezium_url, kafka_connect_url):
         """
-        커넥터 상태 확인 - Debezium과 Kafka Connect 커넥터의 상태 모니터링
+        Check connector status - Monitor status of Debezium and Kafka Connect connectors
         
         Args:
             debezium_url (str): Debezium REST API URL
             kafka_connect_url (str): Kafka Connect REST API URL
             
         Returns:
-            dict: 커넥터 상태 확인 결과
+            dict: Connector status check results
         """
         try:
-            # Debezium 커넥터 상태 확인
+            # Check Debezium connector status
             debezium_status = {}
             try:
                 response = requests.get(f"{debezium_url}/connectors")
@@ -637,10 +709,10 @@ class DataValidation:
                         "is_running": connector_state == "RUNNING" and all(state == "RUNNING" for state in task_states)
                     }
             except Exception as debezium_error:
-                logger.error(f"Debezium 상태 확인 중 오류: {debezium_error}")
+                logger.error(f"Error during Debezium status check: {debezium_error}")
                 debezium_status = {"error": str(debezium_error)}
             
-            # Kafka Connect 상태 확인
+            # Check Kafka Connect status
             kafka_connect_status = {}
             try:
                 response = requests.get(f"{kafka_connect_url}/connectors")
@@ -662,10 +734,10 @@ class DataValidation:
                         "is_running": connector_state == "RUNNING" and all(state == "RUNNING" for state in task_states)
                     }
             except Exception as kafka_connect_error:
-                logger.error(f"Kafka Connect 상태 확인 중 오류: {kafka_connect_error}")
+                logger.error(f"Error during Kafka Connect status check: {kafka_connect_error}")
                 kafka_connect_status = {"error": str(kafka_connect_error)}
             
-            # 전체 상태 평가
+            # Evaluate overall status
             all_running = True
             
             for connector, status in debezium_status.items():
@@ -673,7 +745,7 @@ class DataValidation:
                     all_running = False
                     break
             
-            if all_running:  # Debezium이 모두 실행 중인 경우에만 Kafka Connect 확인
+            if all_running:  # Check Kafka Connect only if all Debezium connectors are running
                 for connector, status in kafka_connect_status.items():
                     if isinstance(status, dict) and not status.get("is_running", False):
                         all_running = False
@@ -687,11 +759,11 @@ class DataValidation:
                 "timestamp": datetime.now().isoformat()
             }
             
-            logger.info(f"커넥터 상태 확인 결과: {result}")
+            logger.info(f"Connector status check result: {result}")
             return result
             
         except Exception as e:
-            logger.error(f"커넥터 상태 확인 중 오류 발생: {e}")
+            logger.error(f"Error during connector status check: {e}")
             return {
                 "validation_type": "connector_status",
                 "error": str(e),
@@ -701,57 +773,57 @@ class DataValidation:
     
     def check_iceberg_table_health(self, iceberg_table):
         """
-        Iceberg 테이블 건강도 확인 - 파티션, 스냅샷 상태 등 검사
+        Check Iceberg table health - Examine partitions, snapshot status, etc.
         
         Args:
-            iceberg_table (str): Iceberg 테이블 이름
+            iceberg_table (str): Iceberg table name
             
         Returns:
-            dict: Iceberg 테이블 건강도 검사 결과
+            dict: Iceberg table health check results
         """
         try:
             spark = self.connect_spark()
             
-            # 테이블 메타데이터 확인
-            # 1. 스냅샷 히스토리
+            # Check table metadata
+            # 1. Snapshot history
             history_df = spark.read.format("iceberg").load(f"{iceberg_table}.history")
             snapshots_count = history_df.count()
             last_snapshot = history_df.orderBy(col("made_current_at").desc()).first() if snapshots_count > 0 else None
             
-            # 2. 매니페스트 확인
+            # 2. Check manifests
             manifests_df = spark.read.format("iceberg").load(f"{iceberg_table}.manifests")
             manifests_count = manifests_df.count()
             
-            # 3. 파티션 확인
+            # 3. Check partitions
             metadata_df = spark.read.format("iceberg").load(f"{iceberg_table}.metadata")
             
-            # 건강도 확인
-            # 1. 오래된 스냅샷 존재 여부 (7일 이상)
+            # Health check
+            # 1. Check for old snapshots (more than 7 days)
             old_snapshots = 0
             if snapshots_count > 0:
                 seven_days_ago = (datetime.now() - timedelta(days=7)).timestamp() * 1000
                 old_snapshots = history_df.filter(col("made_current_at") < seven_days_ago).count()
             
-            # 2. 매니페스트 파일 수가 너무 많은지 확인 (성능 저하 가능성)
-            too_many_manifests = manifests_count > 100  # 임의의 임계값
+            # 2. Check if there are too many manifest files (potential performance issue)
+            too_many_manifests = manifests_count > 100  # arbitrary threshold
             
-            # 결과 구성
+            # Compose results
             health_issues = []
-            health_score = 100  # 100점 만점에서 시작
+            health_score = 100  # Starting from 100 points
             
             if old_snapshots > 5:
-                health_issues.append(f"오래된 스냅샷 {old_snapshots}개 발견 (7일 이상)")
-                health_score -= min(20, old_snapshots * 2)  # 최대 20점 감점
+                health_issues.append(f"Found {old_snapshots} old snapshots (more than 7 days)")
+                health_score -= min(20, old_snapshots * 2)  # Maximum 20 point deduction
             
             if too_many_manifests:
-                health_issues.append(f"매니페스트 파일이 너무 많음 ({manifests_count}개)")
-                health_score -= min(20, (manifests_count - 100) // 10)  # 10개당 1점 감점, 최대 20점
+                health_issues.append(f"Too many manifest files ({manifests_count})")
+                health_score -= min(20, (manifests_count - 100) // 10)  # 1 point deduction per 10 files, max 20 points
             
-            # 테이블 데이터 통계 확인
+            # Check table data statistics
             table_df = spark.read.format("iceberg").load(iceberg_table)
             row_count = table_df.count()
             
-            # 파티션 건강도 확인 (파티션 균형)
+            # Check partition health (partition balance)
             partition_issues = []
             is_partitioned = False
             
@@ -759,8 +831,8 @@ class DataValidation:
                 partitions_info = metadata_df.select("partition_spec").collect()
                 if partitions_info and len(partitions_info) > 0 and partitions_info[0]["partition_spec"]:
                     is_partitioned = True
-                    # 파티션 별 행 수 확인
-                    partition_columns = []  # 실제 애플리케이션에서는 여기에 파티션 컬럼 식별 로직 추가
+                    # Check row count by partition
+                    partition_columns = []  # Add partition column identification logic here in actual application
                     
                     if partition_columns:
                         partitions_df = table_df.groupBy(*partition_columns).count()
@@ -770,25 +842,25 @@ class DataValidation:
                             avg("count").alias("avg_rows")
                         ).collect()[0]
                         
-                        # 불균형 파티션 확인 (평균 대비 10배 이상 차이)
+                        # Check for unbalanced partitions (more than 10x difference from average)
                         if partitions_stats["max_rows"] > partitions_stats["avg_rows"] * 10:
-                            partition_issues.append("파티션 간 심각한 불균형 발견")
+                            partition_issues.append("Severe imbalance found between partitions")
                             health_score -= 15
                         
-                        # 작은 파티션이 너무 많은지 확인
-                        small_partitions = partitions_df.filter(col("count") < 1000).count()  # 임의의 임계값
+                        # Check if there are too many small partitions
+                        small_partitions = partitions_df.filter(col("count") < 1000).count()  # arbitrary threshold
                         if small_partitions > 10:
-                            partition_issues.append(f"작은 파티션이 너무 많음 ({small_partitions}개)")
+                            partition_issues.append(f"Too many small partitions ({small_partitions})")
                             health_score -= min(10, small_partitions // 2)
             except Exception as partition_error:
-                logger.warning(f"파티션 분석 중 오류: {partition_error}")
+                logger.warning(f"Error during partition analysis: {partition_error}")
             
-            # 최종 건강도 평가
-            health_level = "양호"
+            # Final health assessment
+            health_level = "Good"
             if health_score < 70:
-                health_level = "불량"
+                health_level = "Poor"
             elif health_score < 90:
-                health_level = "주의"
+                health_level = "Warning"
             
             result = {
                 "validation_type": "iceberg_table_health",
@@ -800,49 +872,49 @@ class DataValidation:
                 "health_score": health_score,
                 "health_level": health_level,
                 "health_issues": health_issues,
-                "partition_issues": partition_issues if is_partitioned else ["파티션 없음"],
+                "partition_issues": partition_issues if is_partitioned else ["No partitions"],
                 "last_modified": last_snapshot["made_current_at"] if last_snapshot else None,
                 "timestamp": datetime.now().isoformat()
             }
             
-            logger.info(f"Iceberg 테이블 건강도 확인 결과: {result}")
+            logger.info(f"Iceberg table health check result: {result}")
             return result
             
         except Exception as e:
-            logger.error(f"Iceberg 테이블 건강도 확인 중 오류 발생: {e}")
+            logger.error(f"Error during Iceberg table health check: {e}")
             return {
                 "validation_type": "iceberg_table_health",
                 "error": str(e),
-                "health_level": "오류",
+                "health_level": "Error",
                 "timestamp": datetime.now().isoformat()
             }
     
     def run_validation_suite(self, table_name, iceberg_table, kafka_topic=None, timestamp_column=None):
         """
-        종합 검증 스위트 실행 - 여러 검증 함수를 한 번에 실행하고 결과 종합
+        Run comprehensive validation suite - Execute multiple validation functions at once and summarize results
         
         Args:
-            table_name (str): PostgreSQL 테이블 이름
-            iceberg_table (str): Iceberg 테이블 이름
-            kafka_topic (str, optional): 관련 Kafka 토픽 이름
-            timestamp_column (str, optional): 타임스탬프 컬럼 이름
+            table_name (str): PostgreSQL table name
+            iceberg_table (str): Iceberg table name
+            kafka_topic (str, optional): Related Kafka topic name
+            timestamp_column (str, optional): Timestamp column name
             
         Returns:
-            dict: 종합 검증 결과
+            dict: Comprehensive validation results
         """
         self.validation_metadata["start_time"] = datetime.now().isoformat()
         
         try:
-            # 기본 검증 지표
+            # Basic validation metrics
             row_count_result = self.validate_row_count(table_name, iceberg_table)
             
-            # 데이터 샘플링
+            # Data sampling
             sampling_result = self.sample_data_validation(table_name, iceberg_table)
 
-            # Iceberg 테이블 건강도
+            # Iceberg table health
             iceberg_health_result = self.check_iceberg_table_health(iceberg_table)
             
-            # 시간 관련 지표 (타임스탬프 컬럼이 제공된 경우)
+            # Time-related metrics (if timestamp column is provided)
             time_metrics = {}
             if timestamp_column:
                 freshness_result = self.check_data_freshness(table_name, iceberg_table, timestamp_column)
@@ -852,7 +924,7 @@ class DataValidation:
                     "combined_lag": combined_lag_result
                 }
             
-            # Kafka/CDC 관련 지표 (토픽이 제공된 경우)
+            # Kafka/CDC-related metrics (if topic is provided)
             cdc_metrics = {}
             if kafka_topic:
                 cdc_tracking_result = self.track_cdc_messages(kafka_topic)
@@ -862,7 +934,7 @@ class DataValidation:
                     "event_types": event_type_result
                 }
             
-            # 검증 성공률 계산
+            # Calculate validation success rate
             validation_results = [
                 row_count_result.get("is_valid", False),
                 sampling_result.get("is_valid", False),
@@ -878,7 +950,7 @@ class DataValidation:
             total_validations = len(validation_results)
             success_rate = (success_count / total_validations * 100) if total_validations > 0 else 0
             
-            # 종합 결과
+            # Comprehensive results
             result = {
                 "table_name": table_name,
                 "iceberg_table": iceberg_table,
@@ -895,22 +967,22 @@ class DataValidation:
                 }
             }
             
-            # 검증 상태 평가
+            # Evaluate validation status
             if success_rate >= 95:
-                result["overall_status"] = "양호"
+                result["overall_status"] = "Good"
             elif success_rate >= 80:
-                result["overall_status"] = "주의"
+                result["overall_status"] = "Warning"
             else:
-                result["overall_status"] = "불량"
+                result["overall_status"] = "Poor"
             
             self.validation_metadata["end_time"] = datetime.now().isoformat()
             self.validation_metadata["status"] = "completed"
             
-            logger.info(f"종합 검증 스위트 실행 완료: {result['overall_status']}")
+            logger.info(f"Comprehensive validation suite completed: {result['overall_status']}")
             return result
             
         except Exception as e:
-            logger.error(f"종합 검증 스위트 실행 중 오류 발생: {e}")
+            logger.error(f"Error during comprehensive validation suite: {e}")
             self.validation_metadata["end_time"] = datetime.now().isoformat()
             self.validation_metadata["status"] = "error"
             
@@ -919,79 +991,79 @@ class DataValidation:
                 "iceberg_table": iceberg_table,
                 "validation_timestamp": datetime.now().isoformat(),
                 "error": str(e),
-                "overall_status": "오류"
+                "overall_status": "Error"
             }
     
     def save_validation_results(self, results, output_dir="validation_results"):
         """
-        검증 결과를 파일로 저장
+        Save validation results to a file
         
         Args:
-            results (dict): 저장할 검증 결과
-            output_dir (str): 결과 저장 디렉토리
+            results (dict): Validation results to save
+            output_dir (str): Directory to save results
             
         Returns:
-            str: 저장된 파일 경로
+            str: Path to saved file
         """
         try:
-            # 디렉토리 생성
+            # Create directory
             os.makedirs(output_dir, exist_ok=True)
             
-            # 결과 파일명 구성
+            # Compose result file name
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             table_name = results.get("table_name", "unknown_table")
             filename = f"{table_name}_validation_{timestamp}.json"
             file_path = os.path.join(output_dir, filename)
             
-            # 결과 저장
+            # Save results
             with open(file_path, 'w') as f:
                 json.dump(results, f, indent=2, default=str)
             
-            logger.info(f"검증 결과 저장 완료: {file_path}")
+            logger.info(f"Validation results saved: {file_path}")
             return file_path
             
         except Exception as e:
-            logger.error(f"검증 결과 저장 중 오류 발생: {e}")
+            logger.error(f"Error during validation results save: {e}")
             return None
 
 if __name__ == "__main__":    
     import argparse
 
-    # 명령행 인자 파싱
-    parser = argparse.ArgumentParser(description='데이터 검증 툴')
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Data validation tool')
     parser.add_argument('--test', choices=[
         'row_count', 'checksum', 'sample_data', 'replication_lag', 
         'combined_lag', 'connector_status', 'iceberg_health', 'validation_suite'
-    ], required=True, help='실행할 검증 테스트')
+    ], required=True, help='Validation test to run')
 
-    parser.add_argument('--pg-host', default='localhost', help='PostgreSQL 호스트')
-    parser.add_argument('--pg-port', type=int, default=5432, help='PostgreSQL 포트')
-    parser.add_argument('--pg-db', default='postgres', help='PostgreSQL 데이터베이스')
-    parser.add_argument('--pg-user', default='postgres', help='PostgreSQL 사용자')
-    parser.add_argument('--pg-password', default='postgres', help='PostgreSQL 비밀번호')
-    parser.add_argument('--pg-table', help='PostgreSQL 테이블 이름')
+    parser.add_argument('--pg-host', default='localhost', help='PostgreSQL host')
+    parser.add_argument('--pg-port', type=int, default=5432, help='PostgreSQL port')
+    parser.add_argument('--pg-db', default='postgres', help='PostgreSQL database')
+    parser.add_argument('--pg-user', default='postgres', help='PostgreSQL user')
+    parser.add_argument('--pg-password', default='postgres', help='PostgreSQL password')
+    parser.add_argument('--pg-table', help='PostgreSQL table name')
 
-    parser.add_argument('--kafka-servers', default='localhost:9092', help='Kafka 부트스트랩 서버')
-    parser.add_argument('--kafka-topic', help='Kafka 토픽')
-    parser.add_argument('--kafka-group', default='validation-group', help='Kafka 컨슈머 그룹')
+    parser.add_argument('--kafka-servers', default='localhost:9092', help='Kafka bootstrap servers')
+    parser.add_argument('--kafka-topic', help='Kafka topic')
+    parser.add_argument('--kafka-group', default='validation-group', help='Kafka consumer group')
 
-    parser.add_argument('--iceberg-warehouse', default='s3a://warehouse/', help='Iceberg 웨어하우스 경로')
-    parser.add_argument('--iceberg-table', help='Iceberg 테이블 이름 (catalog.database.table)')
-    parser.add_argument('--s3-access-key', default='minioadmin', help='S3/Minio 액세스 키')
-    parser.add_argument('--s3-secret-key', default='minioadmin', help='S3/Minio 시크릿 키')
-    parser.add_argument('--external-ip', default='localhost', help='서비스 접근용 외부 IP')
+    parser.add_argument('--iceberg-warehouse', default='s3a://warehouse/', help='Iceberg warehouse path')
+    parser.add_argument('--iceberg-table', help='Iceberg table name (catalog.database.table)')
+    parser.add_argument('--s3-access-key', default='minioadmin', help='S3/Minio access key')
+    parser.add_argument('--s3-secret-key', default='minioadmin', help='S3/Minio secret key')
+    parser.add_argument('--external-ip', default='localhost', help='External IP for service access')
 
     parser.add_argument('--debezium-url', default='http://localhost:8083', help='Debezium REST API URL')
-    parser.add_argument('--connector-name', help='Debezium 커넥터 이름')
+    parser.add_argument('--connector-name', help='Debezium connector name')
     parser.add_argument('--kafka-connect-url', default='http://localhost:8083', help='Kafka Connect REST API URL')
 
-    parser.add_argument('--timestamp-column', help='타임스탬프 컬럼')
-    parser.add_argument('--columns', help='체크섬 검증에 사용할 컬럼 (콤마 구분)')
-    parser.add_argument('--sample-size', type=int, default=1000, help='샘플링 크기')
+    parser.add_argument('--timestamp-column', help='Timestamp column')
+    parser.add_argument('--columns', help='Columns to use for checksum validation (comma-separated)')
+    parser.add_argument('--sample-size', type=int, default=1000, help='Sample size')
 
     args = parser.parse_args()
 
-    # 설정 딕셔너리 생성
+    # Create configuration dictionaries
     pg_config = {
         "host": args.pg_host,
         "port": args.pg_port,
@@ -1014,70 +1086,70 @@ if __name__ == "__main__":
         "table": args.iceberg_table
     }
 
-    # DataValidation 인스턴스 생성
+    # Create DataValidation instance
     validator = DataValidation(pg_config, kafka_config, iceberg_config)
     
-    # 선택한 테스트 실행
+    # Run selected test
     if args.test == 'row_count':
         if not pg_config["table"] or not args.iceberg_table:
-            print("Error: PostgreSQL 테이블과 Iceberg 테이블 모두 필요합니다.")
+            print("Error: Both PostgreSQL table and Iceberg table are required.")
             sys.exit(1)
         
         result = validator.validate_row_count(args.pg_table, args.iceberg_table)
-        print(f"행 수 검증 결과: {json.dumps(result, indent=2, default=str)}")
+        print(f"Row count validation result: {json.dumps(result, indent=2, default=str)}")
     
     elif args.test == 'checksum':
         if not args.pg_table or not args.iceberg_table or not args.columns:
-            print("Error: PostgreSQL 테이블, Iceberg 테이블, 컬럼 목록이 필요합니다.")
+            print("Error: PostgreSQL table, Iceberg table, and column list are required.")
             sys.exit(1)
         
         columns = [col.strip() for col in args.columns.split(',')]
         result = validator.validate_checksum(args.pg_table, columns, args.iceberg_table)
-        print(f"체크섬 검증 결과: {json.dumps(result, indent=2, default=str)}")
+        print(f"Checksum validation result: {json.dumps(result, indent=2, default=str)}")
     
     elif args.test == 'sample_data':
         if not args.pg_table or not args.iceberg_table:
-            print("Error: PostgreSQL 테이블과 Iceberg 테이블 모두 필요합니다.")
+            print("Error: Both PostgreSQL table and Iceberg table are required.")
             sys.exit(1)
         
         result = validator.sample_data_validation(args.pg_table, args.iceberg_table, args.sample_size)
-        print(f"데이터 샘플링 검증 결과: {json.dumps(result, indent=2, default=str)}")
+        print(f"Data sampling validation result: {json.dumps(result, indent=2, default=str)}")
     
     elif args.test == 'replication_lag':
         if not args.debezium_url or not args.connector_name:
-            print("Error: Debezium URL과 커넥터 이름이 필요합니다.")
+            print("Error: Debezium URL and connector name are required.")
             sys.exit(1)
         
         result = validator.measure_replication_lag(args.debezium_url, args.connector_name)
-        print(f"복제 지연 측정 결과: {json.dumps(result, indent=2, default=str)}")
+        print(f"Replication lag measurement result: {json.dumps(result, indent=2, default=str)}")
     
     elif args.test == 'combined_lag':
         if not args.pg_table or not args.iceberg_table or not args.timestamp_column:
-            print("Error: PostgreSQL 테이블, Iceberg 테이블, 타임스탬프 컬럼이 필요합니다.")
+            print("Error: PostgreSQL table, Iceberg table, and timestamp column are required.")
             sys.exit(1)
         
         result = validator.measure_combined_lag(args.pg_table, args.iceberg_table, args.timestamp_column)
-        print(f"전체 지연 측정 결과: {json.dumps(result, indent=2, default=str)}")
+        print(f"Combined lag measurement result: {json.dumps(result, indent=2, default=str)}")
     
     elif args.test == 'connector_status':
         if not args.debezium_url or not args.kafka_connect_url:
-            print("Error: Debezium URL과 Kafka Connect URL이 필요합니다.")
+            print("Error: Debezium URL and Kafka Connect URL are required.")
             sys.exit(1)
         
         result = validator.check_connector_status(args.debezium_url, args.kafka_connect_url)
-        print(f"커넥터 상태 확인 결과: {json.dumps(result, indent=2, default=str)}")
+        print(f"Connector status check result: {json.dumps(result, indent=2, default=str)}")
     
     elif args.test == 'iceberg_health':
         if not args.iceberg_table:
-            print("Error: Iceberg 테이블이 필요합니다.")
+            print("Error: Iceberg table is required.")
             sys.exit(1)
         
         result = validator.check_iceberg_table_health(args.iceberg_table)
-        print(f"Iceberg 테이블 건강도 확인 결과: {json.dumps(result, indent=2, default=str)}")
+        print(f"Iceberg table health check result: {json.dumps(result, indent=2, default=str)}")
     
     elif args.test == 'validation_suite':
         if not args.pg_table or not args.iceberg_table:
-            print("Error: PostgreSQL 테이블과 Iceberg 테이블 모두 필요합니다.")
+            print("Error: Both PostgreSQL table and Iceberg table are required.")
             sys.exit(1)
         
         result = validator.run_validation_suite(
@@ -1087,7 +1159,7 @@ if __name__ == "__main__":
             args.timestamp_column
         )
         
-        # 결과 저장
+        # Save results
         output_path = validator.save_validation_results(result)
-        print(f"종합 검증 스위트 결과: {json.dumps(result, indent=2, default=str)}")
-        print(f"결과가 다음 경로에 저장되었습니다: {output_path}")
+        print(f"Comprehensive validation suite result: {json.dumps(result, indent=2, default=str)}")
+        print(f"Results saved at: {output_path}")
