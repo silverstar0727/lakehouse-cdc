@@ -24,14 +24,14 @@
 #         # General Spark SQL settings
 #         conf.set("spark.sql.warehouse.dir", iceberg_warehouse_path)
 
-#         # S3/Ceph configuration (AWS SDK v1 방식)
+#         # S3/Ceph configuration (AWS SDK v1)
 #         conf.set("spark.hadoop.fs.s3a.endpoint", f"http://ceph.{external_ip}.nip.io")
 #         conf.set("spark.hadoop.fs.s3a.access.key", s3_access_key)
 #         conf.set("spark.hadoop.fs.s3a.secret.key", s3_secret_key)
 #         conf.set("spark.hadoop.fs.s3a.path.style.access", "true")
 #         conf.set("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         
-#         # 리전 설정 (v1에서도 필요할 수 있음)
+#         # 리전 설정
 #         conf.set("spark.hadoop.fs.s3a.region", "us-east-1")
         
 #         # Set default file system explicitly
@@ -47,12 +47,12 @@
 #         conf.set("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
 #         conf.set("spark.hadoop.fs.s3a.impl.disable.cache", "true")
         
-#         # 중요: Iceberg가 AWS SDK v1 방식으로 S3 파일 시스템 사용하도록 설정
+#         # AWS SDK v1 specific properties
 #         conf.set("spark.sql.catalog.iceberg.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
 #         conf.set("spark.sql.catalog.iceberg.s3.access.key", s3_access_key)
 #         conf.set("spark.sql.catalog.iceberg.s3.secret.key", s3_secret_key)
         
-#         # REST Catalog 연결이 필요하면 다음 설정 사용
+#         # REST Catalog configuration
 #         # conf.set("spark.sql.catalog.iceberg.catalog-impl", "org.apache.iceberg.rest.RESTCatalog")
 #         # conf.set("spark.sql.catalog.iceberg.uri", f"http://iceberg-rest-catalog.{external_ip}.nip.io")
         
@@ -125,13 +125,13 @@ def create_iceberg_spark_session(external_ip: str, s3_access_key: str, s3_secret
         conf.set("spark.sql.catalog.iceberg.s3.secret-access-key", s3_secret_key)
         conf.set("spark.sql.catalog.iceberg.s3.path-style-access", "true")
         
-        # 중요: AWS SDK v2에 대한 명시적 리전 설정
+        # AWS SDK v2 specific properties
         conf.set("spark.sql.catalog.iceberg.s3.region", "us-east-1")
         
-        # Hadoop 설정에도 리전 추가
+        # Hadoop region
         conf.set("spark.hadoop.fs.s3a.region", "us-east-1")
         
-        # 시스템 프로퍼티로 리전 설정 (JVM 레벨)
+        # JVM level region setting
         import os
         os.environ["AWS_REGION"] = "us-east-1"
         
@@ -161,7 +161,7 @@ def create_iceberg_spark_session(external_ip: str, s3_access_key: str, s3_secret
         # AWS SDK v2 specific properties for S3 client
         conf.set("spark.sql.catalog.iceberg.s3.signing-enabled", "false")  # Disable signing for Ceph
         
-        # SDK v2 설정: URL 접속 클라이언트 사용
+        # SDK v2
         conf.set("spark.sql.catalog.iceberg.s3.client.factory", "software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient$Builder")
         
         # Merge conflict strategy
