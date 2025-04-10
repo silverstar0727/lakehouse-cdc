@@ -1,22 +1,4 @@
 # #!/bin/bash
-# export BOOTSTRAP_SERVER_URL=$(kubectl get service -n strimzi-kafka kraft-cluster-kafka-external-bootstrap -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-
-# export OBC_ACCESS_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 --decode)
-# export OBC_SECRET_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 --decode)
-
-# export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-
-# export PG_HOST=$(kubectl get service -n default backend-postgres -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-
-#  docker run -it -d -v ~/Desktop/lakehouse-cdc/src:/workspace \
-#       -e EXTERNAL_IP=$EXTERNAL_IP \
-#       -e OBC_ACCESS_KEY=$OBC_ACCESS_KEY \
-#       -e OBC_SECRET_KEY=$OBC_SECRET_KEY \
-#       -e BOOTSTRAP_SERVER_URL=$BOOTSTRAP_SERVER_URL \
-#       -e ICEBERG_WAREHOUSE_PATH=$ICEBERG_WAREHOUSE_PATH -e PG_HOST=$PG_HOST bitnami/spark:3.5.2
-
-# pip install confluent-kafka requests psycopg2-binary py4j==0.10.9.7 pandas
-
 # PostgreSQL 정보 설정
 PG_HOST="$PG_HOST"
 PG_PORT="5432"
@@ -51,11 +33,6 @@ SAMPLE_SIZE="10"
 # TEST_TYPE="row_count"
 # TEST_TYPE="checksum"
 TEST_TYPE="sample_data"
-# TEST_TYPE="replication_lag"
-# TEST_TYPE="combined_lag"
-# TEST_TYPE="connector_status"
-# TEST_TYPE="iceberg_health"
-# TEST_TYPE="validation_suite"
 
 # 데이터 검증 스크립트 실행
 python3 validation.py --test $TEST_TYPE \

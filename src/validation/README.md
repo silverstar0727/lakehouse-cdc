@@ -1,139 +1,125 @@
-# Data Pipeline Validation Tools
+# Lakehouse CDC Validation
 
-This directory contains tools for validating CDC (Change Data Capture) based data pipelines connecting PostgreSQL databases to Apache Iceberg tables via Kafka and Debezium.
+This directory contains scripts for validating data integrity and consistency in a Lakehouse architecture using PostgreSQL, Kafka, and Iceberg.
 
 ## Overview
 
-The validation tools help ensure data integrity, monitoring, and troubleshooting across the entire pipeline:
+The validation scripts are designed to ensure that data is correctly replicated and synchronized across the components of the Lakehouse architecture. The key components include:
+- **PostgreSQL**: Source database.
+- **Kafka**: Message broker for CDC (Change Data Capture) events.
+- **Iceberg**: Data lake table format for analytical queries.
 
-- **PostgreSQL Source** → **Debezium CDC** → **Kafka** → **Spark/Iceberg**
+## Files
 
-These tools can validate data consistency, measure replication lag, check system health, and provide comprehensive insights into the pipeline's reliability.
+### `debug.py`
+Contains utility functions for debugging Iceberg tables and Spark configurations. It includes:
+- Spark session creation with Iceberg and S3 configurations.
+- Debugging Iceberg table data (e.g., schema, record counts, duplicates).
 
-## Prerequisites
+### `validation.py`
+Implements various validation methods, including:
+- **Row Count Validation**: Compares row counts between PostgreSQL and Iceberg.
+- **Checksum Validation**: Verifies data consistency using checksums.
+- **Sample Data Validation**: Compares random samples of data between PostgreSQL and Iceberg.
 
-- Python 3.6+
+### `run.sh`
+A shell script to automate the execution of validation tests. It sets up environment variables and runs the `validation.py` script with the appropriate arguments.
+
+## Setup
+
+### Prerequisites
+- Python 3.8 or higher
 - Required Python packages:
-  - psycopg2
-  - confluent_kafka
-  - pyspark
-  - requests
-- Running Kubernetes cluster with:
-  - PostgreSQL deployment
-  - Kafka (Strimzi operator)
-  - Debezium Connect
-  - Apache Iceberg with REST catalog
-  - S3-compatible storage (Ceph/MinIO)
+  - `confluent-kafka`
+  - `requests`
+  - `psycopg2-binary`
+  - `py4j`
+  - `pandas`
+- Spark 3.5.2 with Iceberg and Kafka dependencies
+- Access to PostgreSQL, Kafka, and Iceberg environments
 
-## Available Validation Tests
-
-The toolkit provides several validation tests:
-
-1. **Row Count Validation** (`row_count`): Compares the number of rows between source PostgreSQL and target Iceberg tables
-2. **Checksum Validation** (`checksum`): Validates data content integrity by comparing checksums
-3. **Sample Data Validation** (`sample_data`): Samples records from both systems and verifies their consistency
-4. **Replication Lag** (`replication_lag`): Measures CDC replication delay using Debezium metrics
-5. **Combined Lag** (`combined_lag`): Measures end-to-end latency from source to target
-6. **Connector Status** (`connector_status`): Verifies Debezium and Kafka Connect connectors health
-7. **Iceberg Table Health** (`iceberg_health`): Evaluates Iceberg table metadata, snapshot health, and partition balance
-8. **Validation Suite** (`validation_suite`): Runs multiple validation tests and provides a comprehensive report
+### Installation
+1. Install Python dependencies:
+   ```bash
+   pip install confluent-kafka requests psycopg2-binary py4j==0.10.9.7 pandas
+   ```
+2. Ensure Spark is installed and accessible.
 
 ## Usage
 
-You can run the validation tools using the provided `run.sh` script which sets up the necessary environment variables:
-
+### Use Docker
 ```bash
-./run.sh
+export BOOTSTRAP_SERVER_URL=$(kubectl get service -n strimzi-kafka kraft-cluster-kafka-external-bootstrap -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+export OBC_ACCESS_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 --decode)
+export OBC_SECRET_KEY=$(kubectl get secret -n iceberg iceberg-warehouse-bucket -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 --decode)
+
+export EXTERNAL_IP=$(kubectl get service -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+export PG_HOST=$(kubectl get service -n default backend-postgres -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+ docker run -it -d -v ~/Desktop/lakehouse-cdc/src:/workspace \
+      -e EXTERNAL_IP=$EXTERNAL_IP \
+      -e OBC_ACCESS_KEY=$OBC_ACCESS_KEY \
+      -e OBC_SECRET_KEY=$OBC_SECRET_KEY \
+      -e BOOTSTRAP_SERVER_URL=$BOOTSTRAP_SERVER_URL \
+      -e ICEBERG_WAREHOUSE_PATH=$ICEBERG_WAREHOUSE_PATH -e PG_HOST=$PG_HOST \
+      -n pyspark bitnami/spark:3.5.2
+
+# docker exec
+docker exec -it pyspark /bin/bash
+cd /workspace
+pip install confluent-kafka requests psycopg2-binary py4j==0.10.9.7 pandas
 ```
 
-### Customizing Tests
+### Running Validation Tests
+1. Configure the environment variables in `run.sh`:
+   - PostgreSQL connection details (`PG_HOST`, `PG_PORT`, etc.).
+   - Kafka settings (`BOOTSTRAP_SERVER_URL`, `KAFKA_TOPIC`, etc.).
+   - Iceberg settings (`ICEBERG_WAREHOUSE`, `ICEBERG_TABLE`, etc.).
+2. Choose a validation test by setting the `TEST_TYPE` variable in `run.sh`:
+   - `row_count`: Validate row counts.
+   - `checksum`: Validate data consistency using checksums.
+   - `sample_data`: Validate data using random samples.
+3. Run the script:
+   ```bash
+   bash run.sh
+   ```
 
-Edit the `run.sh` script to uncomment the desired test:
+### Running Individual Scripts
+- **Debugging Iceberg Tables**:
+  ```bash
+  python3 debug.py
+  ```
+- **Validation Tests**:
+  ```bash
+  python3 validation.py --test <test_type> --pg-host <host> --pg-port <port> --pg-db <db> \
+    --pg-user <user> --pg-password <password> --pg-table <table> \
+    --kafka-servers <servers> --kafka-topic <topic> --kafka-group <group> \
+    --iceberg-warehouse <warehouse> --iceberg-table <table> \
+    --s3-access-key <access_key> --s3-secret-key <secret_key> \
+    --external-ip <external_ip> --timestamp-column <timestamp_column> \
+    --columns <columns> --sample-size <sample_size>
+  ```
 
-```bash
-# Select test type (uncomment one to use)
-TEST_TYPE="row_count"
-# TEST_TYPE="checksum"
-# TEST_TYPE="sample_data"
-# TEST_TYPE="replication_lag"
-# TEST_TYPE="combined_lag"
-# TEST_TYPE="connector_status"
-# TEST_TYPE="iceberg_health"
-# TEST_TYPE="validation_suite"
-```
+## Validation Methods
 
-### Manual Execution
+### Row Count Validation
+Compares the total number of rows in PostgreSQL and Iceberg tables. Ensures that the data volume matches within a specified tolerance.
 
-You can also run the validation script directly:
+### Checksum Validation
+Calculates and compares checksums for specified columns in PostgreSQL and Iceberg tables to ensure data consistency.
 
-```bash
-python3 validation.py --test row_count \
-  --pg-host <HOST> \
-  --pg-port <PORT> \
-  --pg-db <DATABASE> \
-  --pg-user <USERNAME> \
-  --pg-password <PASSWORD> \
-  --pg-table <TABLE> \
-  --kafka-servers <BOOTSTRAP_SERVERS> \
-  --iceberg-warehouse <WAREHOUSE_PATH> \
-  --iceberg-table <TABLE_NAME> \
-  --s3-access-key <KEY> \
-  --s3-secret-key <SECRET>
-```
+### Sample Data Validation
+Randomly samples records from PostgreSQL and Iceberg tables and compares their values for specified columns.
 
-## Configuration Options
-
-| Parameter | Description |
-|-----------|-------------|
-| `--test` | Validation test to run |
-| `--pg-host` | PostgreSQL host |
-| `--pg-port` | PostgreSQL port |
-| `--pg-db` | PostgreSQL database |
-| `--pg-user` | PostgreSQL username |
-| `--pg-password` | PostgreSQL password |
-| `--pg-table` | PostgreSQL table name |
-| `--kafka-servers` | Kafka bootstrap servers |
-| `--kafka-topic` | Kafka topic name |
-| `--kafka-group` | Kafka consumer group |
-| `--iceberg-warehouse` | Iceberg warehouse path |
-| `--iceberg-table` | Iceberg table name (catalog.database.table) |
-| `--s3-access-key` | S3 access key |
-| `--s3-secret-key` | S3 secret key |
-| `--external-ip` | External IP for services |
-| `--debezium-url` | Debezium REST API URL |
-| `--connector-name` | Debezium connector name |
-| `--kafka-connect-url` | Kafka Connect REST API URL |
-| `--timestamp-column` | Timestamp column name |
-| `--columns` | Columns for checksum (comma-separated) |
-| `--sample-size` | Sample size for data validation |
-
-## Output
-
-Validation results are output in JSON format and logged to `data_validation.log`. The `validation_suite` test also saves results to the `validation_results` directory.
-
-Example output:
-
-```json
-{
-  "validation_type": "row_count",
-  "source_count": 1000,
-  "target_count": 1000,
-  "difference": 0,
-  "difference_percentage": 0.0,
-  "is_valid": true,
-  "timestamp": "2023-06-15T12:34:56.789012"
-}
-```
+## Logs
+Validation results and errors are logged to `data_validation.log`.
 
 ## Troubleshooting
+- Ensure all environment variables are correctly set.
+- Verify connectivity to PostgreSQL, Kafka, and Iceberg.
+- Check the logs for detailed error messages.
 
-If you encounter issues:
-
-1. Check the `data_validation.log` file for detailed error messages
-2. Ensure all connection parameters are correct
-3. Verify that services are running in the Kubernetes cluster
-4. Check network connectivity between the validation script and services
-
-## Extending
-
-To add new validation tests, extend the `DataValidation` class in `validation.py` with additional methods and update the command-line argument handling.
+## License
+This project is licensed under the MIT License.
