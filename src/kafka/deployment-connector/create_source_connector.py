@@ -43,8 +43,10 @@ CONNECTOR_CONFIG = {
         
         # 타임스탬프 변환 - 내장 필드 활용
         "transforms.extractTs.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
-        "transforms.extractTs.renames": "ts_ms:event_timestamp"
+        "transforms.extractTs.renames": "ts_ms:event_timestamp",
     
+        # 헤더 활성화 (Debezium 메타데이터를 헤더로 전송)
+        "tombstones.on.delete": "false",  # 삭제 시 tombstone 비활성화
     }
 }
 

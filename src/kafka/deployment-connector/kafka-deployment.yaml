@@ -43,7 +43,7 @@ spec:
   resources:
     requests:
       storage: 30Gi
-  storageClassName: standard
+  storageClassName: standard-rwo
 ---
 apiVersion: apps/v1
 kind: Deployment

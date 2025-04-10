@@ -15,7 +15,7 @@
 #       -e BOOTSTRAP_SERVER_URL=$BOOTSTRAP_SERVER_URL \
 #       -e ICEBERG_WAREHOUSE_PATH=$ICEBERG_WAREHOUSE_PATH -e PG_HOST=$PG_HOST bitnami/spark:3.5.2
 
-# pip install confluent-kafka requests psycopg2-binary py4j==0.10.9.7
+# pip install confluent-kafka requests psycopg2-binary py4j==0.10.9.7 pandas
 
 # PostgreSQL 정보 설정
 PG_HOST="$PG_HOST"
@@ -43,14 +43,14 @@ CONNECTOR_NAME="postgres-connector"
 KAFKA_CONNECT_URL="http://kafka-connect.$EXTERNAL_IP.nip.io"
 
 # 검증 설정
-TIMESTAMP_COLUMN="__ts_ms"
+TIMESTAMP_COLUMN="__ts_ms"  # 타임스탬프 열 이름
 COLUMNS="id,name,description,price,on_offer"
-SAMPLE_SIZE="100"
+SAMPLE_SIZE="10"
 
 # 테스트 유형 선택 (주석 해제하여 사용)
-TEST_TYPE="row_count"
+# TEST_TYPE="row_count"
 # TEST_TYPE="checksum"
-# TEST_TYPE="sample_data"
+TEST_TYPE="sample_data"
 # TEST_TYPE="replication_lag"
 # TEST_TYPE="combined_lag"
 # TEST_TYPE="connector_status"

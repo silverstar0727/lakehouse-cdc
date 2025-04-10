@@ -118,68 +118,52 @@ def debug_iceberg_data(spark, iceberg_table):
     
     # Load the Iceberg table
     iceberg_df = spark.read.format("iceberg").load(iceberg_table)
-    
-    # 전체 레코드 수 확인
-    total_count = iceberg_df.count()
-    logger.info(f"Total records in Iceberg table: {total_count}")
-    
-    # Check column types
-    logger.info("Iceberg table schema:")
+
+    # print the schema
     iceberg_df.printSchema()
-    
-    # Count records with different is_iceberg_deleted values (string type 확인)
-    if "is_iceberg_deleted" in iceberg_df.columns:
-        # 먼저 distinct value 확인
-        logger.info("Distinct values for is_iceberg_deleted:")
-        iceberg_df.select("is_iceberg_deleted").distinct().show(truncate=False)
-        
-        # 각 값별 카운트
-        str_true_count = iceberg_df.filter("is_iceberg_deleted = 'true'").count()
-        str_false_count = iceberg_df.filter("is_iceberg_deleted = 'false'").count()
-        bool_true_count = iceberg_df.filter("is_iceberg_deleted = true").count()
-        bool_false_count = iceberg_df.filter("is_iceberg_deleted = false").count()
-        null_count = iceberg_df.filter("is_iceberg_deleted IS NULL").count()
-        
-        logger.info(f"Records with is_iceberg_deleted = 'true' (string): {str_true_count}")
-        logger.info(f"Records with is_iceberg_deleted = 'false' (string): {str_false_count}")
-        logger.info(f"Records with is_iceberg_deleted = true (boolean): {bool_true_count}")
-        logger.info(f"Records with is_iceberg_deleted = false (boolean): {bool_false_count}")
-        logger.info(f"Records with is_iceberg_deleted = NULL: {null_count}")
-        
-        # 유효한 레코드 수 (삭제되지 않은 레코드)
-        valid_records = iceberg_df.filter(
-            "is_iceberg_deleted = 'false' OR is_iceberg_deleted = false OR is_iceberg_deleted IS NULL"
-        ).count()
-        logger.info(f"Valid records (not deleted): {valid_records}")
-    
+
+    # print the first 5 rows
+    iceberg_df.show(500)
+
+    # Count the number of records
+    iceberg_count = iceberg_df.count()
+    print(f"Total records in Iceberg table: {iceberg_count}")
+
+    # deleted records
+    deleted_records = iceberg_df.filter(F.col("is_iceberg_deleted") == "true").count()
+    print(f"Deleted records in Iceberg table: {deleted_records}")
+
     # Check for duplicate IDs
-    window_spec = Window.partitionBy("id")
-    dupes_df = iceberg_df.withColumn("count", F.count("id").over(window_spec)) \
-                         .filter("count > 1")
-    
-    dupe_count = dupes_df.select("id").distinct().count()
-    logger.info(f"Number of records with duplicate IDs: {dupes_df.count()}")
-    logger.info(f"Number of unique IDs with duplicates: {dupe_count}")
-    
-    if dupe_count > 0:
-        logger.info("Sample of duplicate IDs:")
-        dupes_df.select("id", "count", "is_iceberg_deleted").distinct().show(10)
-        
-        # 첫 번째 중복 ID에 대한 모든 레코드 확인
-        first_dupe_id = dupes_df.select("id").first().id
-        logger.info(f"Details of all records for duplicate ID {first_dupe_id}:")
-        iceberg_df.filter(f"id = {first_dupe_id}").show(truncate=False)
-    
-    # 스냅샷 히스토리 확인
-    try:
-        logger.info("Iceberg table history:")
-        history_df = spark.read.format("iceberg").load(f"{iceberg_table}.history")
-        history_df.show(truncate=False)
-    except Exception as e:
-        logger.info(f"Could not read history: {e}")
+    duplicate_ids = iceberg_df.groupBy("id").agg(F.count("*").alias("count")).filter(F.col("count") > 1).count()
+    print(f"Duplicate IDs in Iceberg table: {duplicate_ids}")
 
+    # null values
+    null_values = iceberg_df.filter(F.col("name").isNull()).count()
+    print(f"Null values in 'name' column: {null_values}")
 
+    # # 동일한 id에 대해 가장 오래된 레코드이면서 null이 아닌 레코드
+    # earliest_record = iceberg_df.groupBy("id").agg(
+    #     F.max("__ts_ms").alias("latest_event_timestamp"),
+    #     F.first("name").alias("name"),
+    #     F.first("description").alias("description"),
+    #     F.first("price").alias("price"),
+    #     F.first("on_offer").alias("on_offer"),
+    #     F.first("is_iceberg_deleted").alias("is_iceberg_deleted")
+    # ).filter(F.col("name").isNotNull())
+    # earliest_record.show(500)
+    # print(f"Earliest record for each ID: {earliest_record.count()} records found.")
+
+    # 윈도우 함수를 사용하는 방법
+    window_spec = Window.partitionBy("id").orderBy(F.col("__ts_ms").desc())
+
+    latest_records = iceberg_df.withColumn("row_num", F.row_number().over(window_spec)) \
+        .filter((F.col("row_num") == 1) & F.col("name").isNotNull()) \
+        .drop("row_num")
+
+    latest_records.show(500)
+    print(f"Earliest record for each ID: {latest_records.count()} records found.")
     
+
 if __name__ == "__main__":
     import os
     spark = create_iceberg_spark_session(

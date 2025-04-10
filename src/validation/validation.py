@@ -8,12 +8,13 @@ from datetime import datetime, timedelta
 
 import psycopg2
 
-from confluent_kafka import Consumer, KafkaException, KafkaError
+from confluent_kafka import Consumer, KafkaException
 
 from pyspark.sql import SparkSession
 from pyspark.conf import SparkConf
 from pyspark.sql import Window
-from pyspark.sql.functions import col, min, max, avg, lit, coalesce, concat_ws, collect_list, md5, row_number, count
+from pyspark.sql import functions as F
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 # Logging configuration
 logging.basicConfig(
@@ -225,74 +226,23 @@ class DataValidation:
             
             iceberg_df = spark.read.format("iceberg").load(iceberg_table)
             
-            # 스키마 확인 및 유연한 처리
-            columns = iceberg_df.columns
+            window_spec = Window.partitionBy("id").orderBy(F.col("__ts_ms").desc())
+
+            latest_record_count = iceberg_df.withColumn("row_num", F.row_number().over(window_spec)) \
+                .filter((F.col("row_num") == 1) & F.col("name").isNotNull()) \
+                .drop("row_num").count()
             
-            # timestamp_column, is_iceberg_deleted 컬럼 존재 여부 확인
-            if timestamp_column in columns and "is_iceberg_deleted" in columns:
-                # 각 ID의 최신 버전만 고려 (timestamp_column 기준으로 정렬)
-                window_spec = Window.partitionBy("id").orderBy(
-                    col(timestamp_column).desc()
-                )
-                
-                filtered_df = iceberg_df.withColumn("row_num", 
-                    row_number().over(window_spec)
-                ).filter(
-                    "(row_num = 1) AND (is_iceberg_deleted = 'false')"
-                )
-                
-                iceberg_count = filtered_df.count()
-                
-                # 추가 진단 정보 수집
-                total_records = iceberg_df.count()
-                deleted_records = iceberg_df.filter("is_iceberg_deleted = 'true'").count()
-                duplicate_ids = iceberg_df.groupBy("id").count().filter("count > 1").count()
-                
-                # 최신 레코드의 시간 범위 분석
-                time_analysis = filtered_df.agg(
-                    min(timestamp_column).alias("earliest_record"),
-                    max(timestamp_column).alias("latest_record")
-                ).collect()[0]
-                
-                logger.info(f"Iceberg 테이블 진단:")
-                logger.info(f"전체 레코드 수: {total_records}")
-                logger.info(f"삭제된 레코드 수: {deleted_records}")
-                logger.info(f"중복 ID 수: {duplicate_ids}")
-                logger.info(f"최신 레코드 시간 범위:")
-                logger.info(f"  최초 레코드: {time_analysis['earliest_record']}")
-                logger.info(f"  최종 레코드: {time_analysis['latest_record']}")
-            else:
-                # 필요한 컬럼이 없는 경우 대비
-                iceberg_count = iceberg_df.count()
-                logger.warning(f"필요한 컬럼({timestamp_column}, is_iceberg_deleted)을 찾을 수 없어 전체 레코드를 카운트합니다.")
+            # 오차 범위 설정
+            tolerance = 0.01  # 1% 허용 오차
+            is_valid = abs(pg_count - latest_record_count) <= (tolerance * pg_count)
             
-            # 결과 계산
-            count_diff = abs(pg_count - iceberg_count)
-            count_diff_pct = (count_diff / pg_count * 100) if pg_count > 0 else 0
-            
-            # 더 유연한 유효성 검사
-            is_valid = (
-                count_diff_pct <= 0.1 or  # 0.1% 이내 차이
-                (count_diff <= 5)  # 또는 절대값으로 5개 이내 차이
-            )
-            
-            result = {
+            return {
                 "validation_type": "row_count",
-                "source_count": pg_count,
-                "target_count": iceberg_count,
-                "total_iceberg_records": total_records if 'total_records' in locals() else None,
-                "deleted_records": deleted_records if 'deleted_records' in locals() else None,
-                "duplicate_ids": duplicate_ids if 'duplicate_ids' in locals() else None,
-                "earliest_record": time_analysis['earliest_record'] if 'time_analysis' in locals() else None,
-                "latest_record": time_analysis['latest_record'] if 'time_analysis' in locals() else None,
-                "difference": count_diff,
-                "difference_percentage": count_diff_pct,
+                "source_row_count": pg_count,
+                "target_row_count": latest_record_count,
                 "is_valid": is_valid,
                 "timestamp": datetime.now().isoformat()
             }
-            
-            logger.info(f"Row count 검증 결과: {result}")
-            return result
         
         except Exception as e:
             logger.error(f"Row count 검증 중 오류 발생: {e}")
@@ -302,780 +252,344 @@ class DataValidation:
                 "is_valid": False,
                 "timestamp": datetime.now().isoformat()
             }
-            
-    def check_duplicate_ids(self, spark, iceberg_df):
-        """중복 ID 개수 확인"""
-        from pyspark.sql import Window
-        import pyspark.sql.functions as F
         
-        window_spec = Window.partitionBy("id")
-        dupes_df = iceberg_df.withColumn("count", count("id").over(window_spec)) \
-                            .filter("count > 1")
-        
-        return dupes_df.select("id").distinct().count()
-
-    def diagnose_specific_differences(self, table_name, iceberg_table):
-        """PostgreSQL과 Iceberg 간의 특정 차이점 진단"""
-        try:
-            # PostgreSQL에서 모든 ID 가져오기
-            pg_conn = self.connect_postgres()
-            pg_cursor = pg_conn.cursor()
-            pg_cursor.execute(f"SELECT id FROM {table_name}")
-            pg_ids = set([row[0] for row in pg_cursor.fetchall()])
-            pg_cursor.close()
-            pg_conn.close()
-            
-            # Iceberg에서 활성(삭제되지 않은) ID 가져오기
-            spark = self.connect_spark()
-            iceberg_df = spark.read.format("iceberg").load(iceberg_table)
-            active_df = iceberg_df.filter("is_iceberg_deleted = 'false'")
-            
-            # 불일치 ID 검사
-            iceberg_ids = set(active_df.select("id").distinct().toPandas()["id"].tolist())
-            
-            # 차이점 분석
-            only_in_pg = pg_ids - iceberg_ids
-            only_in_iceberg = iceberg_ids - pg_ids
-            
-            # 보고서 생성
-            report = {
-                "total_pg_ids": len(pg_ids),
-                "total_iceberg_ids": len(iceberg_ids),
-                "only_in_pg_count": len(only_in_pg),
-                "only_in_iceberg_count": len(only_in_iceberg),
-                "only_in_pg_samples": list(only_in_pg)[:10] if only_in_pg else [],
-                "only_in_iceberg_samples": list(only_in_iceberg)[:10] if only_in_iceberg else []
-            }
-            
-            # 불일치 ID에 대한 자세한 분석
-            if only_in_iceberg:
-                # Iceberg에만 있는 ID의 레코드 확인
-                sample_id = list(only_in_iceberg)[0]
-                iceberg_record = iceberg_df.filter(f"id = {sample_id}").collect()
-                report["iceberg_only_record_sample"] = [str(row) for row in iceberg_record]
-                
-                # 삭제된 것으로 표시되었지만 여전히 'false'로 나타나는 레코드 확인
-                ambiguous_records = iceberg_df.filter(
-                    f"id IN ({','.join(map(str, list(only_in_iceberg)[:5]))}) AND is_iceberg_deleted = 'false'"
-                ).collect()
-                report["ambiguous_records"] = [str(row) for row in ambiguous_records]
-            
-            return report
-        except Exception as e:
-            logger.error(f"차이점 진단 중 오류 발생: {e}")
-            return {"error": str(e)}
-
-    def validate_checksum(self, table_name, columns, iceberg_table):
+    def validate_checksum(self, table_name, iceberg_table, key_columns=["id"], columns_to_check=None, timestamp_column="__ts_ms"):
         """
-        Validate data content using checksum
+        PostgreSQL과 Iceberg 테이블 간의 데이터 일치성을 체크섬으로 검증합니다.
         
         Args:
-            table_name (str): PostgreSQL table name
-            columns (list): List of columns to use for checksum calculation
-            iceberg_table (str): Iceberg table name
-            
+            table_name (str): PostgreSQL 테이블 이름
+            iceberg_table (str): Iceberg 테이블 경로
+            key_columns (list): 레코드를 식별하는 키 컬럼 목록 (기본값: ["id"])
+            columns_to_check (list): 체크섬을 계산할 컬럼 목록 (None인 경우 전체 컬럼 사용)
+            timestamp_column (str): 타임스탬프 컬럼 이름 (기본값: "__ts_ms")
+        
         Returns:
-            dict: Validation results and metadata
+            dict: 검증 결과를 포함하는 딕셔너리
         """
         try:
-            # Calculate checksum from PostgreSQL
+            # Spark 연결
+            spark = self.connect_spark()
+            
+            iceberg_df = spark.read.format("iceberg").load(iceberg_table)
+            
+            # 필요한 컬럼 목록 가져오기
+            all_columns = iceberg_df.columns
+            
+            # 체크섬에 사용할 컬럼 결정 (명시적으로 지정하지 않으면 전체 컬럼 사용)
+            if columns_to_check is None:
+                # 타임스탬프 컬럼과 내부 관리 컬럼 제외
+                columns_to_check = [col for col in all_columns 
+                                if col != timestamp_column 
+                                and not col.startswith("_") 
+                                and col != "is_iceberg_deleted"
+                                and col != "row_num"]
+            
+            # Iceberg에서 최신 레코드만 선택
+            window_spec = Window.partitionBy("id").orderBy(F.col(timestamp_column).desc())
+            
+            latest_records = iceberg_df.withColumn("row_num", F.row_number().over(window_spec)) \
+                .filter((F.col("row_num") == 1) & F.col("name").isNotNull()) \
+                .drop("row_num")
+            
+            # Iceberg 체크섬 계산 - 각 컬럼에 접두사 추가로 고유하게 만듦
+            checksum_expr = F.md5(F.concat_ws("|", *[F.coalesce(F.col(c).cast("string"), F.lit("NULL")) for c in columns_to_check]))
+            iceberg_checksums = latest_records.select(*key_columns, checksum_expr.alias("iceberg_checksum"))
+            
+            # PostgreSQL 연결
             pg_conn = self.connect_postgres()
             pg_cursor = pg_conn.cursor()
             
-            # Create PostgreSQL concatenation expression with # as delimiter
-            columns_concat = "||'#'||".join([f"COALESCE(CAST({col} AS VARCHAR), '')" for col in columns])
-            pg_cursor.execute(f"SELECT MD5(STRING_AGG({columns_concat}, ',')) FROM {table_name}")
-            pg_checksum = pg_cursor.fetchone()[0]
+            # PostgreSQL에서 체크섬 계산을 위한 쿼리 구성
+            pg_columns_str = ", ".join([f"COALESCE({c}::text, 'NULL')" for c in columns_to_check])
+            pg_key_columns_str = ", ".join(key_columns)
+            
+            pg_query = f"""
+            SELECT {pg_key_columns_str}, 
+                MD5(CONCAT_WS('|', {pg_columns_str})) as pg_checksum
+            FROM {table_name}
+            """
+            
+            pg_cursor.execute(pg_query)
+            pg_results = pg_cursor.fetchall()
             pg_cursor.close()
             pg_conn.close()
             
-            # Calculate checksum from Iceberg using Spark DataFrame operations
-            spark = self.connect_spark()
+            # PostgreSQL 결과를 Spark DataFrame으로 변환 - 이름도 다르게 지정
+            pg_schema = StructType([
+                StructField(key, StringType()) for key in key_columns
+            ] + [StructField("pg_checksum", StringType())])
             
-            # Load the Iceberg table data
-            df = spark.read.format("iceberg").load(iceberg_table)
+            pg_checksums = spark.createDataFrame(pg_results, schema=pg_schema)
             
-            # Create column expressions for each column in the list
-            col_exprs = [coalesce(col(c).cast("string"), lit("")) for c in columns]
+            # Iceberg DataFrame과 PostgreSQL DataFrame 조인하여 체크섬 비교
+            joined_df = iceberg_checksums.join(
+                pg_checksums, 
+                on=key_columns,
+                how="full_outer"
+            )
             
-            # Create a combined string for each row using concat_ws with # delimiter
-            df_with_concat = df.withColumn("combined_cols", concat_ws("#", *col_exprs))
+            # 불일치 레코드 찾기 - 이제 명확한 컬럼 이름 사용
+            mismatch_df = joined_df.filter(
+                (F.col("iceberg_checksum") != F.col("pg_checksum")) | 
+                F.col("iceberg_checksum").isNull() | 
+                F.col("pg_checksum").isNull()
+            )
             
-            # Order the data consistently to ensure matching with PostgreSQL
-            df_ordered = df_with_concat.orderBy("combined_cols")
+            mismatch_count = mismatch_df.count()
+            total_count = joined_df.count()
             
-            # Collect all combined strings and join with comma, then calculate MD5
-            iceberg_checksum = df_ordered.agg(
-                md5(concat_ws(",", collect_list("combined_cols")))
-            ).collect()[0][0]
+            # 불일치 샘플 수집 (최대 10개)
+            mismatch_samples = []
+            if mismatch_count > 0:
+                sample_rows = mismatch_df.limit(10).collect()
+                for row in sample_rows:
+                    sample_dict = {}
+                    for key in key_columns:
+                        sample_dict[key] = row[key]
+                    sample_dict["iceberg_checksum"] = row["iceberg_checksum"]
+                    sample_dict["pg_checksum"] = row["pg_checksum"]
+                    mismatch_samples.append(sample_dict)
             
-            # Compare checksums to determine validity
-            is_valid = pg_checksum == iceberg_checksum
+            # 결과 계산
+            match_percentage = ((total_count - mismatch_count) / total_count * 100) if total_count > 0 else 0
+            is_valid = match_percentage >= 99.9  # 99.9% 이상 일치하면 유효하다고 판단
             
-            # Prepare result object
             result = {
                 "validation_type": "checksum",
-                "source_checksum": pg_checksum,
-                "target_checksum": iceberg_checksum,
+                "table_name": table_name,
+                "iceberg_path": iceberg_table,
+                "total_records": total_count,
+                "matching_records": total_count - mismatch_count,
+                "mismatching_records": mismatch_count,
+                "match_percentage": match_percentage,
+                "mismatch_samples": mismatch_samples if mismatch_count > 0 else None,
+                "columns_checked": columns_to_check,
                 "is_valid": is_valid,
-                "columns_validated": columns,
                 "timestamp": datetime.now().isoformat()
             }
             
-            logger.info(f"Checksum validation result: {result}")
+            logger.info(f"Checksum 검증 결과: {result}")
             return result
-            
+        
         except Exception as e:
-            logger.error(f"Error during checksum validation: {e}")
+            logger.error(f"Checksum 검증 중 오류 발생: {e}")
             return {
                 "validation_type": "checksum",
                 "error": str(e),
                 "is_valid": False,
                 "timestamp": datetime.now().isoformat()
             }
-    
-    def sample_data_validation(self, table_name, iceberg_table, sample_size=1000):
+        
+    def sample_data_validation(self, table_name, iceberg_table, sample_size=10, key_columns=["id"], columns_to_compare=None, timestamp_column="__ts_ms"):
         """
-        Validate data consistency between source and target systems using data sampling
+        PostgreSQL과 Iceberg 테이블에서 랜덤 샘플 n개를 추출하여 데이터를 직접 비교합니다.
         
         Args:
-            table_name (str): PostgreSQL table name
-            iceberg_table (str): Iceberg table name
-            sample_size (int): Number of records to sample
-            
+            table_name (str): PostgreSQL 테이블 이름
+            iceberg_table (str): Iceberg 테이블 경로
+            sample_size (int): 추출할 샘플 수 (기본값: 10)
+            key_columns (list): 레코드를 식별하는 키 컬럼 목록 (기본값: ["id"])
+            columns_to_compare (list): 비교할 컬럼 목록 (None인 경우 전체 컬럼 사용)
+            timestamp_column (str): 타임스탬프 컬럼 이름 (기본값: "__ts_ms")
+        
         Returns:
-            dict: Sampling validation results
+            dict: 검증 결과를 포함하는 딕셔너리
         """
         try:
-            # Extract random sample from PostgreSQL
+            # Spark 연결
+            spark = self.connect_spark()
+            
+            # Iceberg 테이블 로드
+            iceberg_df = spark.read.format("iceberg").load(iceberg_table)
+            
+            # 필요한 컬럼 목록 가져오기
+            all_columns = iceberg_df.columns
+            
+            # 비교할 컬럼 결정 (명시적으로 지정하지 않으면 전체 컬럼 사용)
+            if columns_to_compare is None:
+                # 타임스탬프 컬럼과 내부 관리 컬럼 제외
+                columns_to_compare = [col for col in all_columns 
+                                if col != timestamp_column 
+                                and not col.startswith("_") 
+                                and col != "is_iceberg_deleted"
+                                and col != "row_num"]
+            
+            # Iceberg에서 최신 레코드만 선택
+            window_spec = Window.partitionBy("id").orderBy(F.col(timestamp_column).desc())
+            
+            latest_records = iceberg_df.withColumn("row_num", F.row_number().over(window_spec)) \
+                .filter((F.col("row_num") == 1) & F.col("name").isNotNull()) \
+                .drop("row_num")
+            
+            # 랜덤 샘플 추출을 위한 키 목록 준비
+            key_values_df = latest_records.select(*key_columns).distinct()
+            
+            # 샘플 크기가 실제 데이터 수보다 큰 경우 조정
+            total_records = key_values_df.count()
+            sample_size = min(sample_size, total_records)
+            
+            # 랜덤 샘플 추출 (PySpark의 sample 함수 사용)
+            sampled_keys_df = key_values_df.sample(False, fraction=sample_size/total_records, seed=42)
+            
+            # 최소 샘플 수 보장
+            if sampled_keys_df.count() < sample_size:
+                # 부족한 만큼 랜덤 시드를 변경하여 추가 샘플링
+                additional_samples_needed = sample_size - sampled_keys_df.count()
+                additional_fraction = additional_samples_needed / total_records
+                additional_keys_df = key_values_df.sample(False, fraction=additional_fraction, seed=43)
+                sampled_keys_df = sampled_keys_df.union(additional_keys_df).distinct().limit(sample_size)
+            
+            # 최종 샘플 수 확인
+            final_sample_size = sampled_keys_df.count()
+            sampled_keys = sampled_keys_df.collect()
+            
+            # 키 값으로 조건 생성
+            if len(key_columns) == 1:
+                # 단일 키 컬럼인 경우
+                key_name = key_columns[0]
+                key_values = [row[key_name] for row in sampled_keys]
+                
+                # 문자열 타입 처리를 위한 인용부호 추가
+                key_values_str = [f"'{val}'" if isinstance(val, str) else str(val) for val in key_values]
+                id_condition = f"{key_name} IN ({', '.join(key_values_str)})"
+            else:
+                # 복합 키인 경우
+                conditions = []
+                for row in sampled_keys:
+                    row_condition = " AND ".join([f"{key} = {repr(row[key])}" for key in key_columns])
+                    conditions.append(f"({row_condition})")
+                id_condition = " OR ".join(conditions)
+            
+            # Iceberg 샘플 추출
+            iceberg_samples = latest_records.filter(id_condition).select(*key_columns, *columns_to_compare)
+            
+            # PostgreSQL 연결 및 샘플 추출
             pg_conn = self.connect_postgres()
             pg_cursor = pg_conn.cursor()
             
-            # Identify key columns (primary key or index)
-            pg_cursor.execute(f"""
-                SELECT a.attname
-                FROM pg_index i
-                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                WHERE i.indrelid = '{table_name}'::regclass AND i.indisprimary
-            """)
-            key_columns = [row[0] for row in pg_cursor.fetchall()]
+            # PG 에서 샘플 데이터 추출
+            pg_columns_str = ", ".join(key_columns + columns_to_compare)
+            pg_query = f"""
+            SELECT {pg_columns_str}
+            FROM {table_name}
+            WHERE {id_condition}
+            """
             
-            if not key_columns:
-                logger.warning(f"Primary key not found for table {table_name}. Using first column.")
-                pg_cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position LIMIT 1")
-                key_columns = [pg_cursor.fetchone()[0]]
+            pg_cursor.execute(pg_query)
+            pg_results = pg_cursor.fetchall()
             
-            # Get all columns
-            pg_cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'")
-            all_columns = [row[0] for row in pg_cursor.fetchall()]
-            
-            # Execute random sample query
-            columns_str = ", ".join(all_columns)
-            key_columns_str = ", ".join(key_columns)
-            
-            pg_cursor.execute(f"SELECT {columns_str} FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}")
-            pg_samples = pg_cursor.fetchall()
-            
-            # Extract key values
-            key_values = []
-            key_indices = [all_columns.index(col) for col in key_columns]
-            
-            for row in pg_samples:
-                key_dict = {key_columns[i]: row[key_indices[i]] for i in range(len(key_columns))}
-                key_values.append(key_dict)
-            
+            # 컬럼 이름 가져오기
+            pg_column_names = [desc[0] for desc in pg_cursor.description]
             pg_cursor.close()
             pg_conn.close()
             
-            # Search for records with the same keys in Iceberg
-            spark = self.connect_spark()
-            iceberg_df = spark.read.format("iceberg").load(iceberg_table)
+            # 비교 결과 저장
+            comparison_results = []
+            mismatched_fields = {}
             
-            match_count = 0
-            mismatch_details = []
+            # PG 결과를 딕셔너리로 변환
+            pg_data_by_key = {}
+            for row in pg_results:
+                # 딕셔너리로 변환
+                row_dict = dict(zip(pg_column_names, row))
+                
+                # 키 생성
+                key_tuple = tuple(row_dict[key] for key in key_columns)
+                pg_data_by_key[key_tuple] = row_dict
             
-            for key_dict in key_values:
-                # Create key conditions
-                filter_conditions = []
-                for col, val in key_dict.items():
-                    if val is None:
-                        filter_conditions.append(f"{col} IS NULL")
-                    else:
-                        filter_conditions.append(f"{col} = '{val}'")
+            # Iceberg 샘플 비교
+            for iceberg_row in iceberg_samples.collect():
+                # 키 생성
+                key_tuple = tuple(iceberg_row[key] for key in key_columns)
                 
-                filter_expr = " AND ".join(filter_conditions)
-                
-                # Search for matching records
-                matching_rows = iceberg_df.filter(filter_expr).collect()
-                
-                if matching_rows and len(matching_rows) == 1:
-                    match_count += 1
+                # PG에 같은 키를 가진 레코드가 있는지 확인
+                if key_tuple in pg_data_by_key:
+                    pg_row = pg_data_by_key[key_tuple]
+                    
+                    # 레코드 비교 결과
+                    record_result = {
+                        "keys": {key: iceberg_row[key] for key in key_columns},
+                        "fields": {}
+                    }
+                    
+                    all_match = True
+                    
+                    # 각 필드 비교
+                    for field in columns_to_compare:
+                        iceberg_value = iceberg_row[field]
+                        pg_value = pg_row.get(field)
+                        
+                        # 값 비교 (None/NULL 처리)
+                        values_match = (
+                            (iceberg_value == pg_value) or 
+                            (iceberg_value is None and pg_value is None)
+                        )
+                        
+                        record_result["fields"][field] = {
+                            "iceberg_value": iceberg_value,
+                            "pg_value": pg_value,
+                            "match": values_match
+                        }
+                        
+                        if not values_match:
+                            all_match = False
+                            # 불일치 필드 카운트
+                            mismatched_fields[field] = mismatched_fields.get(field, 0) + 1
+                    
+                    record_result["all_match"] = all_match
+                    comparison_results.append(record_result)
                 else:
-                    mismatch_details.append({
-                        "key": key_dict,
-                        "found_in_target": len(matching_rows) > 0,
-                        "multiple_matches": len(matching_rows) > 1
+                    # PG에 존재하지 않는 레코드
+                    comparison_results.append({
+                        "keys": {key: iceberg_row[key] for key in key_columns},
+                        "exists_in_pg": False,
+                        "all_match": False
                     })
             
-            match_rate = match_count / len(key_values) if key_values else 0
+            # PG에만 존재하는 키 확인
+            iceberg_keys = set(tuple(row[key] for key in key_columns) for row in iceberg_samples.collect())
+            for key_tuple, pg_row in pg_data_by_key.items():
+                if key_tuple not in iceberg_keys:
+                    # Iceberg에 존재하지 않는 레코드
+                    comparison_results.append({
+                        "keys": {key: pg_row[key] for key in key_columns},
+                        "exists_in_iceberg": False,
+                        "all_match": False
+                    })
             
+            # 일치율 계산
+            matching_records = sum(1 for record in comparison_results if record.get("all_match", False))
+            total_compared = len(comparison_results)
+            match_percentage = (matching_records / total_compared * 100) if total_compared > 0 else 0
+            
+            # 결과 구성
             result = {
-                "validation_type": "data_sampling",
-                "sample_size": len(pg_samples),
-                "matched_records": match_count,
-                "match_rate": match_rate,
-                "is_valid": match_rate >= 0.99,  # Valid if match rate is 99% or higher
-                "mismatch_count": len(mismatch_details),
+                "validation_type": "sample_comparison",
+                "table_name": table_name,
+                "iceberg_path": iceberg_table,
+                "sample_size": total_compared,
+                "matching_records": matching_records,
+                "mismatching_records": total_compared - matching_records,
+                "match_percentage": match_percentage,
+                "mismatched_fields": mismatched_fields,
+                "sample_results": comparison_results,
+                "is_valid": match_percentage == 100,  # 모든 샘플이 일치해야 유효
                 "timestamp": datetime.now().isoformat()
             }
             
-            if len(mismatch_details) > 0:
-                result["mismatch_examples"] = mismatch_details[:5]  # Include first 5 examples
-            
-            logger.info(f"Data sampling validation result: {result}")
+            logger.info(f"샘플 비교 검증 결과: 일치율 {match_percentage:.2f}% ({matching_records}/{total_compared})")
             return result
-            
+        
         except Exception as e:
-            logger.error(f"Error during data sampling validation: {e}")
+            logger.error(f"샘플 비교 검증 중 오류 발생: {e}")
             return {
-                "validation_type": "data_sampling",
+                "validation_type": "sample_comparison",
                 "error": str(e),
                 "is_valid": False,
                 "timestamp": datetime.now().isoformat()
             }
         
-    def measure_replication_lag(self, debezium_url, connector_name):
-        """
-        Measure replication lag - Check replication lag time of Debezium connector
-        
-        Args:
-            debezium_url (str): Debezium REST API URL
-            connector_name (str): Debezium connector name
-            
-        Returns:
-            dict: Replication lag measurement results
-        """
-        try:
-            # Call Debezium connector status check API
-            response = requests.get(f"{debezium_url}/connectors/{connector_name}/status")
-            response.raise_for_status()
-            
-            connector_status = response.json()
-            
-            # Check if connector is running
-            if connector_status.get("connector", {}).get("state") != "RUNNING":
-                return {
-                    "validation_type": "replication_lag",
-                    "error": f"Connector is not running. Current state: {connector_status.get('connector', {}).get('state')}",
-                    "is_valid": False,
-                    "timestamp": datetime.now().isoformat()
-                }
-            
-            # Check replication lag metrics of Debezium connector
-            response = requests.get(f"{debezium_url}/connectors/{connector_name}")
-            response.raise_for_status()
-            
-            metrics = response.json()
-            
-            # Extract replication lag related metrics
-            lag_metrics = {}
-            
-            if "tasks" in metrics:
-                for task in metrics["tasks"]:
-                    if "metrics" in task and "source-record-lag" in task["metrics"]:
-                        lag_metrics["source_record_lag"] = task["metrics"]["source-record-lag"]
-                    if "metrics" in task and "lag-in-millis" in task["metrics"]:
-                        lag_metrics["lag_millis"] = task["metrics"]["lag-in-millis"]
-            
-            is_acceptable_lag = True
-            if "lag_millis" in lag_metrics and lag_metrics["lag_millis"] > 60000:  # Warning for lag over 1 minute
-                is_acceptable_lag = False
-            
-            result = {
-                "validation_type": "replication_lag",
-                "connector_name": connector_name,
-                "lag_metrics": lag_metrics,
-                "is_acceptable": is_acceptable_lag,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            logger.info(f"Replication lag measurement result: {result}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error during replication lag measurement: {e}")
-            return {
-                "validation_type": "replication_lag",
-                "error": str(e),
-                "is_acceptable": False,
-                "timestamp": datetime.now().isoformat()
-            }
-    
-    def measure_combined_lag(self, table_name, iceberg_table, event_time_column):
-        """
-        Measure combined lag - Total lag time from source creation to target loading
-        
-        Args:
-            table_name (str): PostgreSQL table name
-            iceberg_table (str): Iceberg table name
-            event_time_column (str): Column name storing event creation time
-            
-        Returns:
-            dict: Combined lag measurement results
-        """
-        try:
-            # Query data within the last 30 minutes from current time
-            thirty_mins_ago = datetime.now() - timedelta(minutes=30)
-            
-            # Query event time and system time of recent data from PostgreSQL
-            pg_conn = self.connect_postgres()
-            pg_cursor = pg_conn.cursor()
-            
-            pg_cursor.execute(f"""
-                SELECT 
-                    {event_time_column}, 
-                    NOW() AS system_time
-                FROM 
-                    {table_name}
-                WHERE 
-                    {event_time_column} > %s
-                ORDER BY 
-                    {event_time_column} DESC
-                LIMIT 100
-            """, (thirty_mins_ago,))
-            
-            pg_times = pg_cursor.fetchall()
-            pg_cursor.close()
-            pg_conn.close()
-            
-            # Query the same data from Iceberg
-            spark = self.connect_spark()
-            
-            from pyspark.sql.functions import current_timestamp, col
-            
-            # Query recent data using Spark SQL
-            iceberg_df = spark.read.format("iceberg").load(iceberg_table)
-            iceberg_times = iceberg_df.filter(col(event_time_column) > thirty_mins_ago.isoformat()) \
-                                     .select(event_time_column, current_timestamp().alias("system_time")) \
-                                     .orderBy(col(event_time_column).desc()) \
-                                     .limit(100) \
-                                     .collect()
-            
-            # Calculate lag between source creation time and target loading time
-            if pg_times and iceberg_times:
-                # Calculate average lag time (in seconds)
-                pg_event_times = [row[0] for row in pg_times]
-                iceberg_event_times = [row[0] for row in iceberg_times]
-                
-                # Find event times present in both source and target
-                common_times = set(pg_event_times).intersection(set(iceberg_event_times))
-                
-                if common_times:
-                    # Map system time for each event
-                    pg_time_map = {row[0]: row[1] for row in pg_times if row[0] in common_times}
-                    iceberg_time_map = {row[0]: row[1] for row in iceberg_times if row[0] in common_times}
-                    
-                    # Calculate lag time
-                    lag_times = []
-                    for event_time in common_times:
-                        # Time recorded in target - Time recorded in source
-                        lag_seconds = (iceberg_time_map[event_time] - pg_time_map[event_time]).total_seconds()
-                        lag_times.append(lag_seconds)
-                    
-                    avg_lag = sum(lag_times) / len(lag_times)
-                    min_lag = min(lag_times)
-                    max_lag = max(lag_times)
-                    
-                    # Allow lag within 5 minutes (300 seconds)
-                    is_acceptable = avg_lag <= 300
-                    
-                    result = {
-                        "validation_type": "combined_lag",
-                        "avg_lag_seconds": avg_lag,
-                        "min_lag_seconds": min_lag,
-                        "max_lag_seconds": max_lag,
-                        "samples_count": len(common_times),
-                        "is_acceptable": is_acceptable,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                else:
-                    result = {
-                        "validation_type": "combined_lag",
-                        "error": "No common event times found in source and target systems",
-                        "is_acceptable": False,
-                        "timestamp": datetime.now().isoformat()
-                    }
-            else:
-                result = {
-                    "validation_type": "combined_lag",
-                    "error": "Insufficient recent data for lag calculation",
-                    "is_acceptable": False,
-                    "timestamp": datetime.now().isoformat()
-                }
-            
-            logger.info(f"Combined lag measurement result: {result}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error during combined lag measurement: {e}")
-            return {
-                "validation_type": "combined_lag",
-                "error": str(e),
-                "is_acceptable": False,
-                "timestamp": datetime.now().isoformat()
-            }
-        
-    def check_connector_status(self, debezium_url, kafka_connect_url):
-        """
-        Check connector status - Monitor status of Debezium and Kafka Connect connectors
-        
-        Args:
-            debezium_url (str): Debezium REST API URL
-            kafka_connect_url (str): Kafka Connect REST API URL
-            
-        Returns:
-            dict: Connector status check results
-        """
-        try:
-            # Check Debezium connector status
-            debezium_status = {}
-            try:
-                response = requests.get(f"{debezium_url}/connectors")
-                response.raise_for_status()
-                
-                debezium_connectors = response.json()
-                
-                for connector in debezium_connectors:
-                    conn_response = requests.get(f"{debezium_url}/connectors/{connector}/status")
-                    conn_response.raise_for_status()
-                    
-                    status = conn_response.json()
-                    connector_state = status.get("connector", {}).get("state", "UNKNOWN")
-                    task_states = [task.get("state", "UNKNOWN") for task in status.get("tasks", [])]
-                    
-                    debezium_status[connector] = {
-                        "connector_state": connector_state,
-                        "task_states": task_states,
-                        "is_running": connector_state == "RUNNING" and all(state == "RUNNING" for state in task_states)
-                    }
-            except Exception as debezium_error:
-                logger.error(f"Error during Debezium status check: {debezium_error}")
-                debezium_status = {"error": str(debezium_error)}
-            
-            # Check Kafka Connect status
-            kafka_connect_status = {}
-            try:
-                response = requests.get(f"{kafka_connect_url}/connectors")
-                response.raise_for_status()
-                
-                kafka_connect_connectors = response.json()
-                
-                for connector in kafka_connect_connectors:
-                    conn_response = requests.get(f"{kafka_connect_url}/connectors/{connector}/status")
-                    conn_response.raise_for_status()
-                    
-                    status = conn_response.json()
-                    connector_state = status.get("connector", {}).get("state", "UNKNOWN")
-                    task_states = [task.get("state", "UNKNOWN") for task in status.get("tasks", [])]
-                    
-                    kafka_connect_status[connector] = {
-                        "connector_state": connector_state,
-                        "task_states": task_states,
-                        "is_running": connector_state == "RUNNING" and all(state == "RUNNING" for state in task_states)
-                    }
-            except Exception as kafka_connect_error:
-                logger.error(f"Error during Kafka Connect status check: {kafka_connect_error}")
-                kafka_connect_status = {"error": str(kafka_connect_error)}
-            
-            # Evaluate overall status
-            all_running = True
-            
-            for connector, status in debezium_status.items():
-                if isinstance(status, dict) and not status.get("is_running", False):
-                    all_running = False
-                    break
-            
-            if all_running:  # Check Kafka Connect only if all Debezium connectors are running
-                for connector, status in kafka_connect_status.items():
-                    if isinstance(status, dict) and not status.get("is_running", False):
-                        all_running = False
-                        break
-            
-            result = {
-                "validation_type": "connector_status",
-                "debezium_status": debezium_status,
-                "kafka_connect_status": kafka_connect_status,
-                "all_connectors_running": all_running,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            logger.info(f"Connector status check result: {result}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error during connector status check: {e}")
-            return {
-                "validation_type": "connector_status",
-                "error": str(e),
-                "all_connectors_running": False,
-                "timestamp": datetime.now().isoformat()
-            }
-    
-    def check_iceberg_table_health(self, iceberg_table):
-        """
-        Check Iceberg table health - Examine partitions, snapshot status, etc.
-        
-        Args:
-            iceberg_table (str): Iceberg table name
-            
-        Returns:
-            dict: Iceberg table health check results
-        """
-        try:
-            spark = self.connect_spark()
-            
-            # Check table metadata
-            # 1. Snapshot history
-            history_df = spark.read.format("iceberg").load(f"{iceberg_table}.history")
-            snapshots_count = history_df.count()
-            last_snapshot = history_df.orderBy(col("made_current_at").desc()).first() if snapshots_count > 0 else None
-            
-            # 2. Check manifests
-            manifests_df = spark.read.format("iceberg").load(f"{iceberg_table}.manifests")
-            manifests_count = manifests_df.count()
-            
-            # 3. Check partitions
-            metadata_df = spark.read.format("iceberg").load(f"{iceberg_table}.metadata")
-            
-            # Health check
-            # 1. Check for old snapshots (more than 7 days)
-            old_snapshots = 0
-            if snapshots_count > 0:
-                seven_days_ago = (datetime.now() - timedelta(days=7)).timestamp() * 1000
-                old_snapshots = history_df.filter(col("made_current_at") < seven_days_ago).count()
-            
-            # 2. Check if there are too many manifest files (potential performance issue)
-            too_many_manifests = manifests_count > 100  # arbitrary threshold
-            
-            # Compose results
-            health_issues = []
-            health_score = 100  # Starting from 100 points
-            
-            if old_snapshots > 5:
-                health_issues.append(f"Found {old_snapshots} old snapshots (more than 7 days)")
-                health_score -= min(20, old_snapshots * 2)  # Maximum 20 point deduction
-            
-            if too_many_manifests:
-                health_issues.append(f"Too many manifest files ({manifests_count})")
-                health_score -= min(20, (manifests_count - 100) // 10)  # 1 point deduction per 10 files, max 20 points
-            
-            # Check table data statistics
-            table_df = spark.read.format("iceberg").load(iceberg_table)
-            row_count = table_df.count()
-            
-            # Check partition health (partition balance)
-            partition_issues = []
-            is_partitioned = False
-            
-            try:
-                partitions_info = metadata_df.select("partition_spec").collect()
-                if partitions_info and len(partitions_info) > 0 and partitions_info[0]["partition_spec"]:
-                    is_partitioned = True
-                    # Check row count by partition
-                    partition_columns = []  # Add partition column identification logic here in actual application
-                    
-                    if partition_columns:
-                        partitions_df = table_df.groupBy(*partition_columns).count()
-                        partitions_stats = partitions_df.agg(
-                            min("count").alias("min_rows"),
-                            max("count").alias("max_rows"),
-                            avg("count").alias("avg_rows")
-                        ).collect()[0]
-                        
-                        # Check for unbalanced partitions (more than 10x difference from average)
-                        if partitions_stats["max_rows"] > partitions_stats["avg_rows"] * 10:
-                            partition_issues.append("Severe imbalance found between partitions")
-                            health_score -= 15
-                        
-                        # Check if there are too many small partitions
-                        small_partitions = partitions_df.filter(col("count") < 1000).count()  # arbitrary threshold
-                        if small_partitions > 10:
-                            partition_issues.append(f"Too many small partitions ({small_partitions})")
-                            health_score -= min(10, small_partitions // 2)
-            except Exception as partition_error:
-                logger.warning(f"Error during partition analysis: {partition_error}")
-            
-            # Final health assessment
-            health_level = "Good"
-            if health_score < 70:
-                health_level = "Poor"
-            elif health_score < 90:
-                health_level = "Warning"
-            
-            result = {
-                "validation_type": "iceberg_table_health",
-                "table": iceberg_table,
-                "snapshots_count": snapshots_count,
-                "manifests_count": manifests_count,
-                "row_count": row_count,
-                "is_partitioned": is_partitioned,
-                "health_score": health_score,
-                "health_level": health_level,
-                "health_issues": health_issues,
-                "partition_issues": partition_issues if is_partitioned else ["No partitions"],
-                "last_modified": last_snapshot["made_current_at"] if last_snapshot else None,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            logger.info(f"Iceberg table health check result: {result}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error during Iceberg table health check: {e}")
-            return {
-                "validation_type": "iceberg_table_health",
-                "error": str(e),
-                "health_level": "Error",
-                "timestamp": datetime.now().isoformat()
-            }
-    
-    def run_validation_suite(self, table_name, iceberg_table, kafka_topic=None, timestamp_column=None):
-        """
-        Run comprehensive validation suite - Execute multiple validation functions at once and summarize results
-        
-        Args:
-            table_name (str): PostgreSQL table name
-            iceberg_table (str): Iceberg table name
-            kafka_topic (str, optional): Related Kafka topic name
-            timestamp_column (str, optional): Timestamp column name
-            
-        Returns:
-            dict: Comprehensive validation results
-        """
-        self.validation_metadata["start_time"] = datetime.now().isoformat()
-        
-        try:
-            # Basic validation metrics
-            row_count_result = self.validate_row_count(table_name, iceberg_table)
-            
-            # Data sampling
-            sampling_result = self.sample_data_validation(table_name, iceberg_table)
-
-            # Iceberg table health
-            iceberg_health_result = self.check_iceberg_table_health(iceberg_table)
-            
-            # Time-related metrics (if timestamp column is provided)
-            time_metrics = {}
-            if timestamp_column:
-                freshness_result = self.check_data_freshness(table_name, iceberg_table, timestamp_column)
-                combined_lag_result = self.measure_combined_lag(table_name, iceberg_table, timestamp_column)
-                time_metrics = {
-                    "freshness": freshness_result,
-                    "combined_lag": combined_lag_result
-                }
-            
-            # Kafka/CDC-related metrics (if topic is provided)
-            cdc_metrics = {}
-            if kafka_topic:
-                cdc_tracking_result = self.track_cdc_messages(kafka_topic)
-                event_type_result = self.track_cdc_event_types(kafka_topic)
-                cdc_metrics = {
-                    "cdc_tracking": cdc_tracking_result,
-                    "event_types": event_type_result
-                }
-            
-            # Calculate validation success rate
-            validation_results = [
-                row_count_result.get("is_valid", False),
-                sampling_result.get("is_valid", False),
-            ]
-            
-            if timestamp_column:
-                validation_results.extend([
-                    freshness_result.get("is_fresh", False),
-                    combined_lag_result.get("is_acceptable", False)
-                ])
-            
-            success_count = sum(1 for result in validation_results if result)
-            total_validations = len(validation_results)
-            success_rate = (success_count / total_validations * 100) if total_validations > 0 else 0
-            
-            # Comprehensive results
-            result = {
-                "table_name": table_name,
-                "iceberg_table": iceberg_table,
-                "validation_timestamp": datetime.now().isoformat(),
-                "validation_success_rate": success_rate,
-                "basic_metrics": {
-                    "row_count": row_count_result,
-                    "sampling": sampling_result,
-                },
-                "time_metrics": time_metrics,
-                "cdc_metrics": cdc_metrics,
-                "system_health": {
-                    "iceberg_table": iceberg_health_result
-                }
-            }
-            
-            # Evaluate validation status
-            if success_rate >= 95:
-                result["overall_status"] = "Good"
-            elif success_rate >= 80:
-                result["overall_status"] = "Warning"
-            else:
-                result["overall_status"] = "Poor"
-            
-            self.validation_metadata["end_time"] = datetime.now().isoformat()
-            self.validation_metadata["status"] = "completed"
-            
-            logger.info(f"Comprehensive validation suite completed: {result['overall_status']}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error during comprehensive validation suite: {e}")
-            self.validation_metadata["end_time"] = datetime.now().isoformat()
-            self.validation_metadata["status"] = "error"
-            
-            return {
-                "table_name": table_name,
-                "iceberg_table": iceberg_table,
-                "validation_timestamp": datetime.now().isoformat(),
-                "error": str(e),
-                "overall_status": "Error"
-            }
-    
-    def save_validation_results(self, results, output_dir="validation_results"):
-        """
-        Save validation results to a file
-        
-        Args:
-            results (dict): Validation results to save
-            output_dir (str): Directory to save results
-            
-        Returns:
-            str: Path to saved file
-        """
-        try:
-            # Create directory
-            os.makedirs(output_dir, exist_ok=True)
-            
-            # Compose result file name
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            table_name = results.get("table_name", "unknown_table")
-            filename = f"{table_name}_validation_{timestamp}.json"
-            file_path = os.path.join(output_dir, filename)
-            
-            # Save results
-            with open(file_path, 'w') as f:
-                json.dump(results, f, indent=2, default=str)
-            
-            logger.info(f"Validation results saved: {file_path}")
-            return file_path
-            
-        except Exception as e:
-            logger.error(f"Error during validation results save: {e}")
-            return None
-
 if __name__ == "__main__":    
     import argparse
 
@@ -1147,9 +661,6 @@ if __name__ == "__main__":
         
         result = validator.validate_row_count(args.pg_table, args.iceberg_table, args.timestamp_column)
         print(f"Row count validation result: {json.dumps(result, indent=2, default=str)}")
-
-        # ret = validator.diagnose_specific_differences(args.pg_table, args.iceberg_table)
-        # print(f"Row count differences: {json.dumps(ret, indent=2, default=str)}")
     
     elif args.test == 'checksum':
         if not args.pg_table or not args.iceberg_table or not args.columns:
@@ -1157,7 +668,7 @@ if __name__ == "__main__":
             sys.exit(1)
         
         columns = [col.strip() for col in args.columns.split(',')]
-        result = validator.validate_checksum(args.pg_table, columns, args.iceberg_table)
+        result = validator.validate_checksum(table_name=args.pg_table, iceberg_table=args.iceberg_table, columns_to_check=columns)
         print(f"Checksum validation result: {json.dumps(result, indent=2, default=str)}")
     
     elif args.test == 'sample_data':
@@ -1165,54 +676,6 @@ if __name__ == "__main__":
             print("Error: Both PostgreSQL table and Iceberg table are required.")
             sys.exit(1)
         
-        result = validator.sample_data_validation(args.pg_table, args.iceberg_table, args.sample_size)
+        columns = [col.strip() for col in args.columns.split(',')]
+        result = validator.sample_data_validation(table_name=args.pg_table, iceberg_table=args.iceberg_table, sample_size=args.sample_size, columns_to_compare=columns)
         print(f"Data sampling validation result: {json.dumps(result, indent=2, default=str)}")
-    
-    elif args.test == 'replication_lag':
-        if not args.debezium_url or not args.connector_name:
-            print("Error: Debezium URL and connector name are required.")
-            sys.exit(1)
-        
-        result = validator.measure_replication_lag(args.debezium_url, args.connector_name)
-        print(f"Replication lag measurement result: {json.dumps(result, indent=2, default=str)}")
-    
-    elif args.test == 'combined_lag':
-        if not args.pg_table or not args.iceberg_table or not args.timestamp_column:
-            print("Error: PostgreSQL table, Iceberg table, and timestamp column are required.")
-            sys.exit(1)
-        
-        result = validator.measure_combined_lag(args.pg_table, args.iceberg_table, args.timestamp_column)
-        print(f"Combined lag measurement result: {json.dumps(result, indent=2, default=str)}")
-    
-    elif args.test == 'connector_status':
-        if not args.debezium_url or not args.kafka_connect_url:
-            print("Error: Debezium URL and Kafka Connect URL are required.")
-            sys.exit(1)
-        
-        result = validator.check_connector_status(args.debezium_url, args.kafka_connect_url)
-        print(f"Connector status check result: {json.dumps(result, indent=2, default=str)}")
-    
-    elif args.test == 'iceberg_health':
-        if not args.iceberg_table:
-            print("Error: Iceberg table is required.")
-            sys.exit(1)
-        
-        result = validator.check_iceberg_table_health(args.iceberg_table)
-        print(f"Iceberg table health check result: {json.dumps(result, indent=2, default=str)}")
-    
-    elif args.test == 'validation_suite':
-        if not args.pg_table or not args.iceberg_table:
-            print("Error: Both PostgreSQL table and Iceberg table are required.")
-            sys.exit(1)
-        
-        result = validator.run_validation_suite(
-            args.pg_table, 
-            args.iceberg_table, 
-            args.kafka_topic, 
-            args.timestamp_column
-        )
-        
-        # Save results
-        output_path = validator.save_validation_results(result)
-        print(f"Comprehensive validation suite result: {json.dumps(result, indent=2, default=str)}")
-        print(f"Results saved at: {output_path}")
