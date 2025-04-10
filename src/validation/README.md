@@ -64,12 +64,13 @@ export PG_HOST=$(kubectl get service -n default backend-postgres -o jsonpath='{.
       -e OBC_SECRET_KEY=$OBC_SECRET_KEY \
       -e BOOTSTRAP_SERVER_URL=$BOOTSTRAP_SERVER_URL \
       -e ICEBERG_WAREHOUSE_PATH=$ICEBERG_WAREHOUSE_PATH -e PG_HOST=$PG_HOST \
-      -n pyspark bitnami/spark:3.5.2
+      --name pyspark bitnami/spark:3.5.2
 
-# docker exec
 docker exec -it pyspark /bin/bash
-cd /workspace
+
+cd /workspace/validation
 pip install confluent-kafka requests psycopg2-binary py4j==0.10.9.7 pandas
+bash run.sh
 ```
 
 ### Running Validation Tests

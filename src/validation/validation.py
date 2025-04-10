@@ -225,6 +225,7 @@ class DataValidation:
             spark = self.connect_spark()
             
             iceberg_df = spark.read.format("iceberg").load(iceberg_table)
+            iceberg_df.show(30)
             
             window_spec = Window.partitionBy("id").orderBy(F.col("__ts_ms").desc())
 

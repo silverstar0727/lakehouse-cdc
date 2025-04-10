@@ -35,12 +35,11 @@ CONNECT_URL = os.getenv("CONNECT_URL", f"http://kafka-connect.{EXTERNAL_IP}.nip.
 
 # Connector 이름
 CONNECTOR_NAME = os.getenv("CONNECTOR_NAME", "iceberg-sink")
-
 CONNECTOR_CONFIG = {
-    "name": CONNECTOR_NAME,
+    "name": "iceberg-sink",
     "config": {
         "connector.class": "io.tabular.iceberg.connect.IcebergSinkConnector",
-        "tasks.max": "2",
+        "tasks.max": "1",
         "topics": KAFKA_TOPIC,
         "iceberg.tables": TABLE_FULL_NAME,
         
@@ -57,36 +56,40 @@ CONNECTOR_CONFIG = {
         "iceberg.catalog.s3.secret-access-key": AWS_SECRET_KEY,
         "iceberg.catalog.s3.region": "us-east-1",
 
-        # 메타데이터 및 스키마 관련 설정 추가
-        "iceberg.tables.evolve-schema-enabled": "true",  # Debezium에서 추가된 필드 자동 추가
-        "iceberg.tables.schema-force-optional": "true",  # 새 필드를 optional로 설정
+        # 메타데이터 및 스키마 관련 설정
+        "iceberg.tables.evolve-schema-enabled": "true",  # 스키마 자동 진화
+        "iceberg.tables.schema-force-optional": "true",  # 새 컬럼을 NULL 허용으로
         
         # 테이블 설정
-        "iceberg.tables.auto-create-enabled": "true",
+        "iceberg.tables.auto-create-enabled": "true",  # 테이블 자동 생성
+        "iceberg.tables.auto-create-props.format-version": "2",  # V2 테이블 형식 사용
+        "iceberg.tables.auto-create-props.write.format.default": "parquet",  # Parquet 형식 사용
+        
+        # 파티셔닝 설정 - 여러 파티션 전략 적용
+        # "iceberg.tables.default-partition-by": "days(event_timestamp),operation_type",  # 날짜 및 작업 유형으로 파티셔닝
+        
+        # 테이블 자동 생성 추가 속성 (파티셔닝 관련)
+        "iceberg.tables.auto-create-props.write.distribution-mode": "hash",  # 해시 기반 분산
+        "iceberg.tables.auto-create-props.write.target-file-size-bytes": "134217728",  # 128MB 파일 크기
         
         # ID 열 설정
-        "iceberg.tables.default-id-columns": "id",
+        "iceberg.tables.default-id-columns": "id",  # PK 컬럼
+        
+        # CDC와 Upsert 설정
+        "iceberg.tables.cdc-field": "is_iceberg_deleted",  # 삭제 여부 필드
+        "iceberg.tables.upsert-mode-enabled": "true",  # Upsert 모드 활성화
+        
+        # 커밋 간격 설정
+        "iceberg.control.commit.interval-ms": "10000",  # 10초마다 커밋
         
         # 컨버터 설정
         "key.converter": "org.apache.kafka.connect.json.JsonConverter",
         "value.converter": "org.apache.kafka.connect.json.JsonConverter",
         "key.converter.schemas.enable": "true",
         "value.converter.schemas.enable": "true",
-
+        
         # 추가 옵션
-        "consumer.auto.offset.reset": "earliest",
-        
-        # DELETE 처리 설정 - 단일 일관된 방식으로 변경
-        "iceberg.tables.cdc-field": "is_iceberg_deleted",  # 새로운 이름으로 변경
-        "iceberg.tables.upsert-mode-enabled": "true",
-
-        # interval 설정
-        "iceberg.control.commit.interval-ms": "10000", # 10초마다 커밋
-        
-        # SMT 설정 개선 - 단일 변환으로 통합
-        "transforms": "DeleteHandler",
-        "transforms.DeleteHandler.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
-        "transforms.DeleteHandler.renames": "__deleted:is_iceberg_deleted"  # __deleted를 is_deleted로 일관되게 변경
+        "consumer.auto.offset.reset": "earliest"
     }
 }
 

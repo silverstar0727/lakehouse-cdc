@@ -30,9 +30,9 @@ COLUMNS="id,name,description,price,on_offer"
 SAMPLE_SIZE="10"
 
 # 테스트 유형 선택 (주석 해제하여 사용)
-# TEST_TYPE="row_count"
+TEST_TYPE="row_count"
 # TEST_TYPE="checksum"
-TEST_TYPE="sample_data"
+# TEST_TYPE="sample_data"
 
 # 데이터 검증 스크립트 실행
 python3 validation.py --test $TEST_TYPE \

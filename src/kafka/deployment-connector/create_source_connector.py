@@ -30,23 +30,31 @@ CONNECTOR_CONFIG = {
         "table.include.list": "public.items",
         "snapshot.mode": "initial",
         
-        # 변환 체인 정의 (unwrap, extractTs)
-        "transforms": "unwrap,extractTs",
+        # 변환 체인 정의
+        "transforms": "unwrap,extractFields",
         
-        # 기존 unwrap 변환 설정
+        # Debezium 이벤트 unwrap - 변경된 데이터만 추출
         "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
         "transforms.unwrap.drop.tombstones": "false",
         "transforms.unwrap.delete.handling.mode": "rewrite",
+        "transforms.unwrap.add.fields": "op,ts_ms", # 작업 유형과 타임스탬프 포함
         
-        # 소스 타임스탬프 사용
-        "transforms.unwrap.add.fields": "ts_ms",
+        # 필드 이름 변경
+        "transforms.extractFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+        "transforms.extractFields.renames": "__deleted:is_iceberg_deleted,op:operation_type,ts_ms:event_timestamp",
         
-        # 타임스탬프 변환 - 내장 필드 활용
-        "transforms.extractTs.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
-        "transforms.extractTs.renames": "ts_ms:event_timestamp",
-    
-        # 헤더 활성화 (Debezium 메타데이터를 헤더로 전송)
-        "tombstones.on.delete": "false",  # 삭제 시 tombstone 비활성화
+        # 성능 및 안정성 설정
+        "max.batch.size": "2048",
+        "max.queue.size": "8192",
+        "poll.interval.ms": "100",
+        "heartbeat.interval.ms": "5000",
+        
+        # 스키마 역사 추적
+        # "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+        # "schema.history.internal.kafka.topic": "schema-changes.inventory",
+        
+        # 헤더 설정
+        "tombstones.on.delete": "false"
     }
 }
 
